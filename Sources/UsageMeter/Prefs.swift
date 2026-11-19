@@ -119,7 +119,7 @@ func claudeSetupState() -> ClaudeSetup {
     if let data = try? Data(contentsOf: settings),
        let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
        let line = j["statusLine"] as? [String: Any], let cmd = line["command"] as? String {
-        return .manual(cmd)
+        return cmd.contains("dock-usage.sh") ? .ready : .manual(cmd)      // 我們設的：等下次用 Claude Code 就有資料
     }
     return .automatic
 }
