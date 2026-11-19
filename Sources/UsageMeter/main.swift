@@ -538,10 +538,13 @@ func dockItems() -> [String: AXUIElement] {
     return out
 }
 
-/// 項目在螢幕上的框（AX 座標：主螢幕左上為原點）
+/// 項目在螢幕上的框（AX 座標：主螢幕左上為原點）；位置和大小一次問 Dock，每格少一半來回
 func frame(of item: AXUIElement) -> CGRect? {
     var p = CGPoint.zero, sz = CGSize.zero
-    guard let pv = ax(item, kAXPositionAttribute), let sv = ax(item, kAXSizeAttribute) else { return nil }
+    var vals: CFArray?
+    guard AXUIElementCopyMultipleAttributeValues(item, [kAXPositionAttribute, kAXSizeAttribute] as CFArray, [], &vals) == .success,
+          let v = vals as? [AnyObject], v.count == 2, CFGetTypeID(v[0]) == AXValueGetTypeID(), CFGetTypeID(v[1]) == AXValueGetTypeID() else { return nil }
+    let pv = v[0], sv = v[1]
     AXValueGetValue(pv as! AXValue, .cgPoint, &p)
     AXValueGetValue(sv as! AXValue, .cgSize, &sz)
     return CGRect(origin: p, size: sz)
@@ -625,7 +628,10 @@ final class Overlay {
     var item: AXUIElement?
     var lastTick = -1
     var prevRect: CGRect?
-    static let lead = CGFloat(Double(ProcessInfo.processInfo.environment["DOCKUSAGE_LEAD"] ?? "") ?? 0.5)
+    var prevTime = 0.0
+    var rect: CGRect?             // 這一格讀到的 Dock 框（hover 判斷沿用，不再問一次）
+    /// 讀到的位置之後還要多久才上螢幕：除了到下一格的時間，再加上 Dock 回報本身的延遲（毫秒，可用環境變數調）
+    static let latency = (Double(ProcessInfo.processInfo.environment["DOCKUSAGE_LATENCY"] ?? "") ?? 0) / 1000
     var lastLevel = 0.0
     var attention = 0
     var nativeBadge = false   // Dock 上這個 app 自己有紅點
@@ -646,8 +652,8 @@ final class Overlay {
 
     var primary: Window? { usage.short ?? usage.long }
 
-    /// 每格：追 Dock 項目位置，水位往目標靠，換字時重畫
-    func step(phase: CGFloat, dt: Double) -> Bool {
+    /// 每格先做：追 Dock 項目位置。ahead＝讀到的位置要再過多久才會顯示（秒）
+    func place(ahead: Double) -> Bool {
         let fake = ProcessInfo.processInfo.environment["DOCKUSAGE_FAKE"].map { v -> CGRect in
             let n = v.split(separator: ",").compactMap { Double($0) }
             let wobble = n.count > 4 ? sin(CACurrentMediaTime() * 6) * n[4] : 0   // 測試用：上下擺動
@@ -655,16 +661,32 @@ final class Overlay {
         guard let r = fake ?? item.flatMap(frame), fake != nil || onScreen(r), Prefs.on(kind.feature), primary != nil || attention > 0 else {
             layer.isHidden = true
             ghost?.removeFromSuperlayer(); ghost = nil
-            prevRect = nil
+            prevRect = nil; rect = nil
             return false
         }
-        // 讀到的位置要等下一格才畫得出來：照上一格的移動量往前推半格（大跳就不推，避免出現/消失時亂飛）
+        rect = r
+        // 讀到的位置要過 ahead 秒才上螢幕：照移動速度往前推（大跳就不推，避免出現/消失時亂飛）
+        let now = CACurrentMediaTime()
         var pr = r
-        if let p = prevRect, abs(r.minY - p.minY) < 40, abs(r.height - p.height) < 20 {
-            pr = CGRect(x: r.minX + (r.minX - p.minX) * Self.lead, y: r.minY + (r.minY - p.minY) * Self.lead,
-                        width: r.width + (r.width - p.width) * Self.lead, height: r.height + (r.height - p.height) * Self.lead)
+        if let p = prevRect, now - prevTime > 0.001, now - prevTime < 0.05, abs(r.minY - p.minY) < 40, abs(r.height - p.height) < 20 {
+            let k = CGFloat(ahead / (now - prevTime))
+            pr = CGRect(x: r.minX + (r.minX - p.minX) * k, y: r.minY + (r.minY - p.minY) * k,
+                        width: r.width + (r.width - p.width) * k, height: r.height + (r.height - p.height) * k)
         }
-        prevRect = r
+        prevRect = r; prevTime = now
+        // 圖示在 Dock 項目框裡置中，邊長＝框的短邊減 2pt（tilesize 37 時框高 39；2026-11-19 校準截圖量過）
+        // AX 座標左上為原點；host 視窗蓋住主螢幕，layer 座標左下為原點
+        let screenH = Host.shared.window.frame.height
+        let side = min(pr.width, pr.height) - 2
+        layer.frame = CGRect(x: pr.midX - side / 2, y: screenH - pr.midY - side / 2, width: side, height: side)
+        ghost?.frame = layer.frame
+        layer.isHidden = false
+        return true
+    }
+
+    /// 位置送出後才做：水位往目標靠，換字時重畫（重畫慢也不會拖到位置）
+    func paint(phase: CGFloat, dt: Double) {
+        guard !layer.isHidden else { return }
         let to = primary?.pct ?? 0
         shown += (to - shown) * (1 - pow(0.88, dt * 30))
         if abs(to - shown) < 0.05 { shown = to }
@@ -693,14 +715,6 @@ final class Overlay {
             lastTick = t; lastLevel = shown; lastAttention = attention; lastBadge = nativeBadge
             layer.contents = renderImage(kind: kind, level: primary == nil ? nil : shown, tick: usage.short == nil ? nil : usage.long?.pct, phase: phase, attention: attention, badgeLeft: nativeBadge, label: label)
         }
-        // 圖示在 Dock 項目框裡置中，邊長＝框的短邊減 2pt（tilesize 37 時框高 39；2026-11-19 校準截圖量過）
-        // AX 座標左上為原點；host 視窗蓋住主螢幕，layer 座標左下為原點
-        let screenH = Host.shared.window.frame.height
-        let side = min(pr.width, pr.height) - 2
-        layer.frame = CGRect(x: pr.midX - side / 2, y: screenH - pr.midY - side / 2, width: side, height: side)
-        ghost?.frame = layer.frame
-        layer.isHidden = false
-        return true
     }
 }
 
@@ -1026,7 +1040,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         timer?.invalidate(); timer = nil
         link?.invalidate(); link = nil
         if fast, let screen = NSScreen.main {
-            link = screen.displayLink(target: self, selector: #selector(linkFired))
+            link = screen.displayLink(target: self, selector: #selector(linkFired(_:)))
             link?.add(to: .main, forMode: .common)
         } else {
             timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 20, repeats: true) { [weak self] _ in self?.frameTick() }
@@ -1034,9 +1048,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     var ticks = 0, tickWindow = CACurrentMediaTime()
-    @objc func linkFired() {
+    @objc func linkFired(_ l: CADisplayLink) {
         let a = CACurrentMediaTime()
-        frameTick()
+        frameTick(target: l.targetTimestamp)
         ticks += 1
         tickCost += CACurrentMediaTime() - a
         if a - tickWindow > 2, ProcessInfo.processInfo.environment["DOCKUSAGE_FAKE"] != nil {
@@ -1054,7 +1068,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var browser: Overlay?
         if visible {
             for o in overlays where o.kind.isBrowser && !o.top.isEmpty {
-                guard let item = o.item, let r = frame(of: item) else { continue }
+                guard let r = o.rect else { continue }
                 let f = CGRect(x: r.minX, y: screenH - r.maxY, width: r.width, height: r.height)
                 if f.contains(m) { hit = (o.kind.rawValue, f); browser = o; break }
             }
@@ -1093,7 +1107,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     var lastTrusted: Bool?
-    func frameTick() {
+    /// target：這一格預計上螢幕的時間（顯示器同步時才有）
+    func frameTick(target: Double? = nil) {
         let t = AXIsProcessTrusted()
         if t != lastTrusted { lastTrusted = t; log("trusted=\(t)") }
         guard t else { return }
@@ -1117,9 +1132,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let dt = min(now - lastFrame, 0.1)
         lastFrame = now
         phase += 3.2 * CGFloat(dt)   // 約 2 秒流過一個波
+        // 先只送位置，讓它趕上這一格；重畫圖案放在後面另一批送
+        let ahead = max((target ?? now) - CACurrentMediaTime(), 0) + Overlay.latency
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        let anyVisible = overlays.map { $0.step(phase: phase, dt: dt) }.contains(true)
+        let anyVisible = overlays.map { $0.place(ahead: ahead) }.contains(true)
+        CATransaction.commit()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for o in overlays { o.paint(phase: phase, dt: dt) }
         CATransaction.commit()
         hoverNote(visible: anyVisible)
         Host.shared.setVisible(anyVisible)
