@@ -165,18 +165,33 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
             shape.addClip()
         }
 
-        // 只有用掉的部分（水位以下）壓暗＋染色，上面維持原圖示：多少 % 就滿到多少
-        let filled = NSRect(x: body.minX, y: body.minY, width: body.width, height: body.height * p)
-        NSColor.black.withAlphaComponent(0.40).setFill()
-        filled.fill()
+        // 只有用掉的部分（水位以下）壓暗＋染色，上面維持原圖示：多少 % 就滿到多少；水面是流動的波浪
+        let waterLevel = body.minY + body.height * p
+        let amp = p > 0.01 && p < 0.99 ? s * 0.05 : 0
+        func waveY(_ x: CGFloat, _ offset: CGFloat = 0, _ a: CGFloat? = nil, _ dir: CGFloat = 1) -> CGFloat {
+            waterLevel + sin((x - body.minX) / body.width * .pi * 2 * 1.3 + phase * dir + offset) * (a ?? amp)
+        }
+        func wave(_ offset: CGFloat, _ a: CGFloat, _ dir: CGFloat = 1) -> NSBezierPath {
+            let path = NSBezierPath()
+            path.move(to: NSPoint(x: body.minX - 2, y: body.minY - 2))
+            var x = body.minX - 2
+            while x <= body.maxX + 2 { path.line(to: NSPoint(x: x, y: waveY(x, offset, a, dir))); x += s / 64 }
+            path.line(to: NSPoint(x: body.maxX + 2, y: body.minY - 2))
+            path.close()
+            return path
+        }
         color.withAlphaComponent(0.22).setFill()
-        filled.fill()
+        wave(.pi * 0.7, amp * 0.8, -0.7).fill()      // 後層反向流
+        let front = wave(0, amp)
+        NSColor.black.withAlphaComponent(0.40).setFill()
+        front.fill()
+        color.withAlphaComponent(0.22).setFill()
+        front.fill()
 
         // ASCII 格子：用掉的部分由密字元填滿、隨機跳字＋白色閃光；水面那排淡字元翻騰；空的部分只留淡點
         let cols = 10
         let area = body
         let cell = area.width / CGFloat(cols)
-        let level = area.minY + area.height * p
         let tick = Int(phase * 4)                       // 每秒約 13 次換字
         let glyph = NSFont.monospacedSystemFont(ofSize: cell * 1.15, weight: .bold)
         func rnd(_ c: Int, _ r: Int, _ k: Int) -> CGFloat {
@@ -193,6 +208,7 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
                 let k = tick + (c * 7 + r * 13) % 5      // 每格換字的節拍錯開
                 let x = rnd(c, r, k / 2)
                 var ch: Character, col: NSColor, key: String, alpha: CGFloat
+                let level = waveY(rect.midX)
                 if rect.maxY <= level {
                     if rnd(c, r, tick &* 3 &+ 1) < 0.05 {
                         ch = "*"; col = .white; key = "w"; alpha = 0.7
@@ -210,11 +226,26 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
                     col = .white; key = "w"; alpha = 0.06 + 0.06 * rnd(c, r, k)
                 }
                 cg.setAlpha(alpha)
-                cg.draw(glyphImage(ch, col, glyph, cell, key), in: rect)
+                if rect.minY < level && rect.maxY > level {      // 水面那格只畫在波浪下
+                    cg.saveGState(); front.addClip()
+                    cg.draw(glyphImage(ch, col, glyph, cell, key), in: rect)
+                    cg.restoreGState()
+                } else {
+                    cg.draw(glyphImage(ch, col, glyph, cell, key), in: rect)
+                }
             }
         }
 
         cg.restoreGState()
+
+        // 水面亮線
+        let crest = NSBezierPath()
+        var cx = body.minX - 2
+        crest.move(to: NSPoint(x: cx, y: waveY(cx)))
+        while cx <= body.maxX + 2 { cx += s / 64; crest.line(to: NSPoint(x: cx, y: waveY(cx))) }
+        crest.lineWidth = s * 0.012
+        NSColor.white.withAlphaComponent(amp > 0 ? 0.8 : 0).setStroke()
+        crest.stroke()
 
         // 7 天刻度：兩側的小括號
         if let long {
@@ -237,10 +268,8 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
         shadow.shadowColor = NSColor.black.withAlphaComponent(0.85)
         shadow.shadowBlurRadius = s * 0.03
         let font = NSFont.monospacedSystemFont(ofSize: s * 0.26, weight: .heavy)
-        let str = NSMutableAttributedString(string: num, attributes: [.font: font, .foregroundColor: NSColor.white, .shadow: shadow,
-                                                                        .strokeColor: NSColor.black.withAlphaComponent(0.7), .strokeWidth: -4])
-        str.append(NSAttributedString(string: "%", attributes: [.font: NSFont.monospacedSystemFont(ofSize: s * 0.12, weight: .bold), .foregroundColor: NSColor.white, .shadow: shadow,
-                                                                        .strokeColor: NSColor.black.withAlphaComponent(0.7), .strokeWidth: -4]))
+        let str = NSMutableAttributedString(string: num, attributes: [.font: font, .foregroundColor: NSColor.white, .shadow: shadow])
+        str.append(NSAttributedString(string: "%", attributes: [.font: NSFont.monospacedSystemFont(ofSize: s * 0.12, weight: .bold), .foregroundColor: NSColor.white.withAlphaComponent(0.85), .shadow: shadow]))
         let sz = str.size()
         str.draw(at: NSPoint(x: body.midX - sz.width / 2, y: body.midY - sz.height / 2))
         return true
@@ -373,7 +402,7 @@ final class Overlay {
         let to = primary?.pct ?? 0
         shown += (to - shown) * (1 - pow(0.88, dt * 30))
         if abs(to - shown) < 0.05 { shown = to }
-        let t = Int(phase * 4)
+        let t = Int(phase * 12)                          // 約 38 次/秒重畫，波浪才順；字元仍約 13 次/秒換
         if t != lastTick || abs(shown - lastLevel) > 0.01 {
             lastTick = t; lastLevel = shown
             layer.contents = renderImage(kind: kind, level: shown, tick: usage.short == nil ? nil : usage.long?.pct, phase: phase)
