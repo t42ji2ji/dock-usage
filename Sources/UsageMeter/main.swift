@@ -257,34 +257,43 @@ func log(_ m: String) {
 
 // MARK: - 疊在 Dock 圖示上的透明視窗
 
+/// 內容固定用 80pt 畫成一張點陣圖貼在 layer 上；Dock 放大縮小時只改視窗大小、GPU 縮放，不重畫
 final class OverlayView: NSView {
-    var kind: Kind = .claude
-    var level: Double?
-    var tick: Double?
-    var phase: CGFloat = 0
-    override func draw(_ dirty: NSRect) {
-        // 圖示在 Dock 項目框裡置中，邊長＝框的短邊減 2pt（tilesize 37 時框高 39；2026-11-19 校準截圖量過）
-        let side = min(bounds.width, bounds.height) - 2
-        let r = NSRect(x: bounds.midX - side / 2, y: bounds.midY - side / 2, width: side, height: side)
-        renderIcon(kind: kind, base: nil, short: level, long: tick, phase: phase, size: side).draw(in: r)
+    static let px = 160   // 80pt @2x，Dock 放大上限
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.contentsGravity = .resize
+        layer?.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func render(kind: Kind, level: Double?, tick: Double?, phase: CGFloat) {
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Self.px, pixelsHigh: Self.px, bitsPerSample: 8, samplesPerPixel: 4,
+                                   hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        rep.size = NSSize(width: 80, height: 80)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        renderIcon(kind: kind, base: nil, short: level, long: tick, phase: phase, size: 80).draw(in: NSRect(x: 0, y: 0, width: 80, height: 80))
+        NSGraphicsContext.restoreGraphicsState()
+        layer?.contents = rep.cgImage
     }
 }
 
 final class Overlay {
     let kind: Kind
     let window: NSWindow
-    let view = OverlayView()
+    let view = OverlayView(frame: .zero)
     var usage = Usage()
     var shown: Double = 0
     var item: AXUIElement?
     var lastTick = -1
     var prevRect: CGRect?
-    static let lead = CGFloat(Double(ProcessInfo.processInfo.environment["DOCKUSAGE_LEAD"] ?? "") ?? 1.0)
+    static let lead = CGFloat(Double(ProcessInfo.processInfo.environment["DOCKUSAGE_LEAD"] ?? "") ?? 0.5)
     var lastLevel = 0.0
 
     init(kind: Kind) {
         self.kind = kind
-        view.kind = kind
         window = NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: true)
         window.isOpaque = false
         window.backgroundColor = .clear
@@ -319,16 +328,16 @@ final class Overlay {
         let to = primary?.pct ?? 0
         shown += (to - shown) * (1 - pow(0.88, dt * 30))
         if abs(to - shown) < 0.05 { shown = to }
-        view.level = shown
-        view.tick = usage.short == nil ? nil : usage.long?.pct
-        view.phase = phase
-        // 字元每秒換約 13 次：只有換字、水位在動或尺寸變了才重畫
+        // 字元每秒換約 13 次：只有換字或水位在動才重畫；大小變了交給 layer 縮放
         let t = Int(phase * 4)
-        if t != lastTick || abs((view.level ?? 0) - lastLevel) > 0.01 || window.frame.size != f.size {
-            lastTick = t; lastLevel = view.level ?? 0
-            view.needsDisplay = true
+        if t != lastTick || abs(shown - lastLevel) > 0.01 {
+            lastTick = t; lastLevel = shown
+            view.render(kind: kind, level: shown, tick: usage.short == nil ? nil : usage.long?.pct, phase: phase)
         }
-        if window.frame != f { window.setFrame(f, display: true) }
+        // 圖示在 Dock 項目框裡置中，邊長＝框的短邊減 2pt（tilesize 37 時框高 39；2026-11-19 校準截圖量過）
+        let side = min(f.width, f.height) - 2
+        let sq = NSRect(x: f.midX - side / 2, y: f.midY - side / 2, width: side, height: side)
+        if window.frame != sq { window.setFrame(sq, display: false) }
         if !window.isVisible { window.orderFrontRegardless() }
         return true
     }
