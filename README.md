@@ -21,7 +21,7 @@ A grid of flickering ASCII characters fills each icon from the bottom as you use
 
 Numbers update whenever you use Claude Code or Codex. A limit that has passed its reset time drops back to 0.
 
-### Disk space on Finder and the Trash
+### Finder and the Trash
 
 The Finder icon fills up as your disk does, with the percentage on top. The Trash fills up with how many things are in it, and is full at 30.
 
