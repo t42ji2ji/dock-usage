@@ -264,7 +264,8 @@ final class Overlay {
         window.backgroundColor = .clear
         window.hasShadow = false
         window.ignoresMouseEvents = true
-        window.level = .popUpMenu
+        window.canHide = false   // app 被隱藏（例如背景啟動）時疊加層也要照常顯示
+        window.level = .screenSaver
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         window.contentView = view
     }
@@ -272,7 +273,7 @@ final class Overlay {
     var primary: Window? { usage.short ?? usage.long }
 
     /// 每格：追 Dock 項目位置，水位往目標靠，重畫
-    func step(phase: CGFloat) -> Bool {
+    func step(phase: CGFloat, dt: Double) -> Bool {
         let fake = ProcessInfo.processInfo.environment["DOCKUSAGE_FAKE"].map { v -> CGRect in
             let n = v.split(separator: ",").compactMap { Double($0) }; return CGRect(x: n[0], y: n[1] + (kind == .gpt ? n[3] : 0), width: n[2], height: n[3]) }
         guard let r = fake ?? item.flatMap(frame), fake != nil || onScreen(r), primary != nil else {
@@ -281,14 +282,14 @@ final class Overlay {
         }
         let primaryH = CGDisplayBounds(CGMainDisplayID()).height
         let f = NSRect(x: r.minX, y: primaryH - r.maxY, width: r.width, height: r.height)
-        if window.frame != f { window.setFrame(f, display: false) }
         let to = primary?.pct ?? 0
-        shown += (to - shown) * 0.12
+        shown += (to - shown) * (1 - pow(0.88, dt * 30))
         if abs(to - shown) < 0.05 { shown = to }
         view.level = shown
         view.tick = usage.short == nil ? nil : usage.long?.pct
         view.phase = phase
         view.needsDisplay = true
+        if window.frame != f { window.setFrame(f, display: true) }
         if !window.isVisible { window.orderFrontRegardless() }
         return true
     }
@@ -300,7 +301,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let overlays = [Overlay(kind: .claude), Overlay(kind: .gpt)]
     var phase: CGFloat = 0
     var timer: Timer?
+    var link: CADisplayLink?
     var fast = false
+    var lastFrame = CACurrentMediaTime()
     var lastScan = Date.distantPast
     let queue = DispatchQueue(label: "dockusage.load", qos: .utility)
 
@@ -326,13 +329,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Dock 看得到時 30 格／秒追位置和動畫；收起時每 0.25 秒看一眼就好
+    /// Dock 看得到時跟螢幕刷新同步（120Hz 螢幕就每秒 120 次）追位置和動畫；收起時每秒看 20 次
     func schedule(fast: Bool) {
         self.fast = fast
-        timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: fast ? 1.0 / 30 : 0.25, repeats: true) { [weak self] _ in self?.frameTick() }
-        RunLoop.main.add(timer!, forMode: .common)
+        timer?.invalidate(); timer = nil
+        link?.invalidate(); link = nil
+        if fast, let screen = NSScreen.main {
+            link = screen.displayLink(target: self, selector: #selector(linkFired))
+            link?.add(to: .main, forMode: .common)
+        } else {
+            timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 20, repeats: true) { [weak self] _ in self?.frameTick() }
+            RunLoop.main.add(timer!, forMode: .common)
+        }
     }
+    @objc func linkFired() { frameTick() }
 
     var lastTrusted: Bool?
     func frameTick() {
@@ -346,8 +356,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 o.item = o.kind.appPaths.lazy.compactMap { items[$0] }.first
             }
         }
-        phase += 0.9 / 30
-        let anyVisible = overlays.map { $0.step(phase: phase) }.contains(true)
+        // 收起時只讀一個圖示的位置，還在螢幕外就不做別的
+        if !fast, let item = overlays.lazy.compactMap({ $0.item }).first,
+           let pv = ax(item, kAXPositionAttribute) {
+            var p = CGPoint.zero
+            AXValueGetValue(pv as! AXValue, .cgPoint, &p)
+            if !onScreen(CGRect(origin: p, size: CGSize(width: 40, height: 40))) { lastFrame = CACurrentMediaTime(); return }
+        }
+        let now = CACurrentMediaTime()
+        let dt = min(now - lastFrame, 0.1)
+        lastFrame = now
+        phase += 0.9 * CGFloat(dt)   // 約 7 秒流過一個波
+        let anyVisible = overlays.map { $0.step(phase: phase, dt: dt) }.contains(true)
         if anyVisible != fast {
             log("visible=\(anyVisible) " + overlays.map { o in "\(o.kind) item=\(o.item != nil) frame=\(o.item.flatMap(frame).map { "\($0)" } ?? "-") win=\(o.window.frame) level=\(o.primary?.pct ?? -1)" }.joined(separator: " | "))
             schedule(fast: anyVisible)
