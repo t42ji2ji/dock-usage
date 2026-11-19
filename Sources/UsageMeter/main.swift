@@ -525,29 +525,59 @@ func renderNote(_ app: String, _ n: Note) -> NSImage {
 
 // MARK: - 瀏覽器
 
-struct SiteTime: Equatable { var host: String; var minutes: Double }
+struct SiteTime: Equatable { var host: String; var minutes: Double; var icon: Data? = nil }
+
+/// 複製一份 SQLite（瀏覽器開著時檔案被鎖）來讀，讀完刪掉
+func withCopiedDB<T>(_ f: String, _ body: (OpaquePointer) -> T) -> T? {
+    let fm = FileManager.default
+    let tmp = NSTemporaryDirectory() + "dockusage-" + UUID().uuidString
+    defer { for ext in ["", "-wal", "-shm"] { try? fm.removeItem(atPath: tmp + ext) } }
+    guard (try? fm.copyItem(atPath: f, toPath: tmp)) != nil else { return nil }
+    try? fm.copyItem(atPath: f + "-wal", toPath: tmp + "-wal")
+    var db: OpaquePointer?
+    guard sqlite3_open_v2(tmp, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK, let db else { sqlite3_close(db); return nil }
+    defer { sqlite3_close(db) }
+    return body(db)
+}
+
+/// 從瀏覽器自己的 Favicons 資料庫找這個網站的小圖示（最接近 32px 的那張）
+func favicon(_ host: String, profiles: [String]) -> Data? {
+    for p in profiles {
+        let found: Data?? = withCopiedDB(p + "/Favicons") { db in
+            var q: OpaquePointer?
+            defer { sqlite3_finalize(q) }
+            let sql = "select b.image_data from icon_mapping m join favicon_bitmaps b on b.icon_id = m.icon_id where m.page_url like ? or m.page_url like ? order by abs(b.width - 32) limit 1"
+            guard sqlite3_prepare_v2(db, sql, -1, &q, nil) == SQLITE_OK else { return nil }
+            let t = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+            sqlite3_bind_text(q, 1, "%://\(host)/%", -1, t)
+            sqlite3_bind_text(q, 2, "%://www.\(host)/%", -1, t)
+            guard sqlite3_step(q) == SQLITE_ROW, let b = sqlite3_column_blob(q, 0) else { return nil }
+            return Data(bytes: b, count: Int(sqlite3_column_bytes(q, 0)))
+        }
+        if let d = found ?? nil { return d }
+    }
+    return nil
+}
 
 /// 今天在這個瀏覽器（所有設定檔）前景停留的分鐘數，和前五名網站。
 /// History 是 SQLite 而且瀏覽器開著時被鎖住，所以複製一份來讀；只讀今天的造訪
 func browserToday(_ root: String) -> (total: Double, top: [SiteTime])? {
     let fm = FileManager.default
-    guard let profiles = try? fm.contentsOfDirectory(atPath: root) else { return nil }
+    guard let names = try? fm.contentsOfDirectory(atPath: root) else { return nil }
     let start = Calendar.current.startOfDay(for: Date())
     let since = Int64((start.timeIntervalSince1970 + 11_644_473_600) * 1_000_000)   // Chromium 時間：1601 年起的微秒
-    let tmp = NSTemporaryDirectory() + "dockusage-history"
     var byHost: [String: Double] = [:]
-    for p in profiles {
-        let f = root + "/" + p + "/History"
+    var used: [String] = []
+    for n in names {
+        let f = root + "/" + n + "/History"
         let mod = [f, f + "-wal"].compactMap { (try? fm.attributesOfItem(atPath: $0))?[.modificationDate] as? Date }.max()
         guard let mod, mod >= start else { continue }
-        for ext in ["", "-wal", "-shm"] { try? fm.removeItem(atPath: tmp + ext) }
-        guard (try? fm.copyItem(atPath: f, toPath: tmp)) != nil else { continue }
-        try? fm.copyItem(atPath: f + "-wal", toPath: tmp + "-wal")
-        var db: OpaquePointer?
-        guard sqlite3_open_v2(tmp, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK else { sqlite3_close(db); continue }
-        var q: OpaquePointer?
-        let sql = "select u.url, sum(c.total_foreground_duration) from visits v join urls u on u.id = v.url join context_annotations c on c.visit_id = v.id where v.visit_time > ? group by u.url"
-        if sqlite3_prepare_v2(db, sql, -1, &q, nil) == SQLITE_OK {
+        used.append(root + "/" + n)
+        _ = withCopiedDB(f) { db in
+            var q: OpaquePointer?
+            defer { sqlite3_finalize(q) }
+            let sql = "select u.url, sum(c.total_foreground_duration) from visits v join urls u on u.id = v.url join context_annotations c on c.visit_id = v.id where v.visit_time > ? group by u.url"
+            guard sqlite3_prepare_v2(db, sql, -1, &q, nil) == SQLITE_OK else { return }
             sqlite3_bind_int64(q, 1, since)
             while sqlite3_step(q) == SQLITE_ROW {
                 guard let c = sqlite3_column_text(q, 0), let host = URL(string: String(cString: c))?.host, !host.isEmpty else { continue }
@@ -555,30 +585,46 @@ func browserToday(_ root: String) -> (total: Double, top: [SiteTime])? {
                 byHost[h, default: 0] += Double(sqlite3_column_int64(q, 1)) / 60_000_000
             }
         }
-        sqlite3_finalize(q)
-        sqlite3_close(db)
     }
-    for ext in ["", "-wal", "-shm"] { try? fm.removeItem(atPath: tmp + ext) }
     let top = byHost.map { SiteTime(host: $0.key, minutes: $0.value) }.filter { $0.minutes >= 1 }.sorted { $0.minutes > $1.minutes }.prefix(5)
-    return (byHost.values.reduce(0, +), Array(top))
+        .map { var t = $0; t.icon = favicon(t.host, profiles: used); return t }
+    return (byHost.values.reduce(0, +), top)
 }
 
 func fmtMinutes(_ m: Double) -> String { m >= 60 ? "\(Int(m) / 60)h \(Int(m) % 60)m" : "\(Int(m))m" }
 
 func renderTop(_ total: Double, _ top: [SiteTime]) -> NSImage {
     let zh = (Locale.preferredLanguages.first ?? "en").hasPrefix("zh")
-    let w: CGFloat = 220, pad: CGFloat = 10
-    let para = NSMutableParagraphStyle()
-    para.tabStops = [NSTextTab(textAlignment: .right, location: w - pad * 2)]
-    let s = NSMutableAttributedString(string: (zh ? "今天" : "Today") + "\t" + fmtMinutes(total), attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.white, .paragraphStyle: para])
-    for t in top {
-        s.append(NSAttributedString(string: "\n" + (t.host.count > 20 ? t.host.prefix(19) + "…" : t.host) + "\t" + fmtMinutes(t.minutes), attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular), .foregroundColor: NSColor.white.withAlphaComponent(0.85), .paragraphStyle: para]))
-    }
-    let h = ceil(s.boundingRect(with: NSSize(width: w - pad * 2, height: 1000), options: [.usesLineFragmentOrigin]).height)
-    return NSImage(size: NSSize(width: w, height: h + pad * 2), flipped: false) { r in
-        NSColor.black.withAlphaComponent(0.72).setFill()
-        NSBezierPath(roundedRect: r, xRadius: 10, yRadius: 10).fill()
-        s.draw(with: NSRect(x: pad, y: pad, width: w - pad * 2, height: h), options: [.usesLineFragmentOrigin])
+    let w: CGFloat = 248, pad: CGFloat = 12, row: CGFloat = 26, head: CGFloat = 28
+    let h = pad * 2 + head + row * CGFloat(top.count)
+    let maxM = top.first?.minutes ?? 1
+    return NSImage(size: NSSize(width: w, height: h), flipped: true) { r in
+        let bg = NSBezierPath(roundedRect: r.insetBy(dx: 0.5, dy: 0.5), xRadius: 12, yRadius: 12)
+        NSColor(white: 0.12, alpha: 0.92).setFill(); bg.fill()
+        NSColor(white: 1, alpha: 0.12).setStroke(); bg.lineWidth = 1; bg.stroke()
+        func text(_ s: String, _ font: NSFont, _ c: NSColor, x: CGFloat, y: CGFloat, right: Bool = false, maxW: CGFloat = 200) {
+            let a = NSAttributedString(string: s, attributes: [.font: font, .foregroundColor: c])
+            let sz = a.size()
+            let rect = NSRect(x: right ? x - min(sz.width, maxW) : x, y: y - sz.height / 2, width: min(sz.width, maxW), height: sz.height)
+            a.draw(with: rect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+        }
+        text(zh ? "今天" : "Today", .systemFont(ofSize: 11, weight: .semibold), NSColor(white: 1, alpha: 0.5), x: pad, y: pad + 9)
+        text(fmtMinutes(total), .monospacedDigitSystemFont(ofSize: 15, weight: .bold), .white, x: w - pad, y: pad + 9, right: true)
+        for (i, t) in top.enumerated() {
+            let y = pad + head + row * CGFloat(i) + row / 2
+            // 和第一名相比的長條，墊在這一列底下
+            let bar = NSRect(x: pad, y: y - row / 2 + 3, width: (w - pad * 2) * CGFloat(t.minutes / maxM), height: row - 6)
+            NSColor(white: 1, alpha: 0.07).setFill(); NSBezierPath(roundedRect: bar, xRadius: 6, yRadius: 6).fill()
+            let iconRect = NSRect(x: pad + 6, y: y - 8, width: 16, height: 16)
+            if let d = t.icon, let img = NSImage(data: d) {
+                img.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            } else {
+                NSColor(white: 1, alpha: 0.25).setFill(); NSBezierPath(roundedRect: iconRect, xRadius: 4, yRadius: 4).fill()
+                text(String(t.host.prefix(1)).uppercased(), .systemFont(ofSize: 10, weight: .bold), .white, x: iconRect.midX - 3, y: y)
+            }
+            text(t.host, .systemFont(ofSize: 12), NSColor(white: 1, alpha: 0.9), x: pad + 30, y: y, maxW: w - pad * 2 - 30 - 60)
+            text(fmtMinutes(t.minutes), .monospacedDigitSystemFont(ofSize: 12, weight: .medium), NSColor(white: 1, alpha: 0.6), x: w - pad - 6, y: y, right: true)
+        }
         return true
     }
 }
