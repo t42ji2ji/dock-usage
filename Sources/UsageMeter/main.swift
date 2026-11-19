@@ -98,7 +98,7 @@ func loadCodex() -> Usage {
 
 // MARK: - Icon render
 
-/// 原 app 圖示 + 從底部漲起的水位（5 小時）+ 一條虛線刻度（7 天）+ 百分比數字
+/// 原 app 圖示壓暗 + 10 格燈條（5 小時）+ 兩側刻度（7 天）+ 百分比數字
 func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase: CGFloat, size: CGFloat = 512) -> NSImage {
     NSImage(size: NSSize(width: size, height: size), flipped: false) { _ in
         let s = size
@@ -117,75 +117,58 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
         NSGraphicsContext.saveGraphicsState()
         shape.addClip()
 
-        // 水面：兩層正弦波
-        let level = body.minY + body.height * p
-        let amp = p > 0.01 && p < 0.99 ? s * 0.05 : 0
-        func wave(_ offset: CGFloat, _ a: CGFloat, _ dir: CGFloat = 1) -> NSBezierPath {
-            let path = NSBezierPath()
-            path.move(to: NSPoint(x: body.minX, y: body.minY))
-            var x = body.minX
-            while x <= body.maxX + 1 {
-                let t = (x - body.minX) / body.width
-                path.line(to: NSPoint(x: x, y: level + sin(t * .pi * 2 * 1.3 + phase * dir + offset) * a))
-                x += s / 128
+        // 整個圖示壓暗，燈格才亮得起來
+        NSColor.black.withAlphaComponent(0.62).setFill()
+        body.fill()
+
+        // 10 格燈條，每格 10%，由下往上亮
+        let n = 10
+        let padX = body.width * 0.14, padY = body.height * 0.10
+        let area = body.insetBy(dx: padX, dy: padY)
+        let pitch = area.height / CGFloat(n)
+        let barH = pitch * 0.62
+        let lit = p * CGFloat(n)                      // 例如 5.7 格
+        let scanY = (phase * 0.35).truncatingRemainder(dividingBy: 1.4) - 0.2   // 掃描光 0→1 循環
+        for i in 0..<n {
+            let r = NSRect(x: area.minX, y: area.minY + CGFloat(i) * pitch + (pitch - barH) / 2, width: area.width, height: barH)
+            let path = NSBezierPath(roundedRect: r, xRadius: barH * 0.25, yRadius: barH * 0.25)
+            let fill = min(max(lit - CGFloat(i), 0), 1)
+            if fill >= 1 {
+                // 掃描光經過時這格變亮
+                let glow = max(0, 1 - abs(CGFloat(i) + 0.5 - scanY * lit) / 1.2)
+                color.blended(withFraction: glow * 0.6, of: .white)!.setFill()
+                path.fill()
+            } else if fill > 0 {
+                // 最上面沒滿的那格：呼吸閃爍
+                let breathe = 0.35 + 0.45 * (0.5 + 0.5 * sin(phase * 2.2))
+                color.withAlphaComponent(breathe).setFill()
+                path.fill()
+            } else {
+                NSColor.white.withAlphaComponent(0.10).setFill()
+                path.fill()
             }
-            path.line(to: NSPoint(x: body.maxX, y: body.minY))
-            path.close()
-            return path
         }
-        let front = wave(0, amp)
-        // 沒用到的部分壓暗（疊在真圖示上時只壓水面以上）
-        let dark = NSBezierPath(rect: body)
-        if base == nil { dark.append(front); dark.windingRule = .evenOdd }
-        NSColor.black.withAlphaComponent(0.55).setFill()
-        dark.fill()
-        color.withAlphaComponent(0.35).setFill()
-        wave(.pi * 0.7, amp * 0.8, -0.7).fill()
-        NSGraphicsContext.saveGraphicsState()
-        front.addClip()
-        base?.draw(in: NSRect(x: 0, y: 0, width: s, height: s))
-        NSGradient(starting: color.withAlphaComponent(hot ? 0.75 : 0.30), ending: color.blended(withFraction: 0.4, of: .black)!.withAlphaComponent(hot ? 0.9 : 0.6))!
-            .draw(in: front, angle: -90)
-        NSGraphicsContext.restoreGraphicsState()
-        // 水面亮線
-        let crest = NSBezierPath()
-        var cx = body.minX
-        while cx <= body.maxX + 1 {
-            let t = (cx - body.minX) / body.width
-            let pt = NSPoint(x: cx, y: level + sin(t * .pi * 2 * 1.3 + phase) * amp)
-            if cx == body.minX { crest.move(to: pt) } else { crest.line(to: pt) }
-            cx += s / 128
-        }
-        crest.lineWidth = s * 0.012
-        NSColor.white.withAlphaComponent(p > 0.01 && p < 0.99 ? 0.8 : 0).setStroke()
-        crest.stroke()
 
-        // 7 天刻度線
+        // 7 天刻度：兩側的小括號
         if let long {
-            let y = body.minY + body.height * CGFloat(min(max(long, 0), 100)) / 100
-            let line = NSBezierPath()
-            line.move(to: NSPoint(x: body.minX, y: y))
-            line.line(to: NSPoint(x: body.maxX, y: y))
-            line.lineWidth = s * 0.012
-            line.setLineDash([s * 0.03, s * 0.022], count: 2, phase: 0)
-            NSColor.white.withAlphaComponent(0.75).setStroke()
-            line.stroke()
+            let y = area.minY + area.height * CGFloat(min(max(long, 0), 100)) / 100
+            NSColor.white.withAlphaComponent(0.9).setFill()
+            let w = body.width * 0.07, h = max(s * 0.02, 1)
+            NSRect(x: body.minX + body.width * 0.03, y: y - h / 2, width: w, height: h).fill()
+            NSRect(x: body.maxX - body.width * 0.03 - w, y: y - h / 2, width: w, height: h).fill()
         }
         NSGraphicsContext.restoreGraphicsState()
 
-        // 數字
+        // 數字（等寬）
         let num = "\(Int(short.rounded()))"
         let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.55)
-        shadow.shadowBlurRadius = s * 0.02
-        shadow.shadowOffset = NSSize(width: 0, height: -s * 0.006)
-        let big = NSFont.systemFont(ofSize: s * 0.30, weight: .heavy)
-        let rounded = big.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: s * 0.30) } ?? big
-        let str = NSMutableAttributedString(string: num, attributes: [.font: rounded, .foregroundColor: NSColor.white, .shadow: shadow])
-        let smallFont = NSFont.systemFont(ofSize: s * 0.13, weight: .bold)
-        str.append(NSAttributedString(string: "%", attributes: [.font: smallFont, .foregroundColor: NSColor.white.withAlphaComponent(0.85), .shadow: shadow]))
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.85)
+        shadow.shadowBlurRadius = s * 0.03
+        let font = NSFont.monospacedSystemFont(ofSize: s * 0.26, weight: .heavy)
+        let str = NSMutableAttributedString(string: num, attributes: [.font: font, .foregroundColor: NSColor.white, .shadow: shadow])
+        str.append(NSAttributedString(string: "%", attributes: [.font: NSFont.monospacedSystemFont(ofSize: s * 0.12, weight: .bold), .foregroundColor: NSColor.white.withAlphaComponent(0.85), .shadow: shadow]))
         let sz = str.size()
-        str.draw(at: NSPoint(x: body.midX - sz.width / 2, y: body.minY + body.height * 0.08))
+        str.draw(at: NSPoint(x: body.midX - sz.width / 2, y: body.midY - sz.height / 2))
         return true
     }
 }
@@ -236,15 +219,23 @@ func log(_ m: String) {
 
 // MARK: - 疊在 Dock 圖示上的透明視窗
 
+let dockOrientation = UserDefaults(suiteName: "com.apple.dock")?.string(forKey: "orientation") ?? "bottom"
+
 final class OverlayView: NSView {
     var kind: Kind = .claude
     var level: Double?
     var tick: Double?
     var phase: CGFloat = 0
     override func draw(_ dirty: NSRect) {
+        // Dock 項目的感應區比圖示大，多出來的一側放「執行中」小圓點：圖示貼在另一側
         let side = min(bounds.width, bounds.height)
-        let img = renderIcon(kind: kind, base: nil, short: level, long: tick, phase: phase, size: side)
-        img.draw(in: NSRect(x: bounds.midX - side / 2, y: bounds.midY - side / 2, width: side, height: side))
+        var r = NSRect(x: bounds.midX - side / 2, y: bounds.midY - side / 2, width: side, height: side)
+        switch dockOrientation {
+        case "left": r.origin.x = bounds.maxX - side
+        case "right": r.origin.x = bounds.minX
+        default: r.origin.y = bounds.maxY - side
+        }
+        renderIcon(kind: kind, base: nil, short: level, long: tick, phase: phase, size: side).draw(in: r)
     }
 }
 
