@@ -21,6 +21,14 @@ A grid of flickering ASCII characters fills each icon from the bottom as you use
 
 Numbers update whenever you use Claude Code or Codex. A limit that has passed its reset time drops back to 0.
 
+### Disk space on Finder and the Trash
+
+The Finder icon fills up as your disk does. When the disk is 85% full, the Trash fills too, as a reminder that emptying it frees space.
+
+### Latest notification on hover
+
+Rest the pointer on an app in the Dock to see the last notification it showed you, such as a LINE message. It clears once you open that app. Only notifications that appeared on screen while Dock Usage was running are kept, and only in memory.
+
 ### Red dot for Claude Code sessions in cmux
 
 If you run Claude Code in [cmux](https://cmux.com), a red dot with a count appears at the top right of the Claude icon (top left if Claude shows its own badge). It counts the tabs that show a notification in cmux: a session finished its turn, asks for permission, or waits for your input. It goes away once you open those tabs. Nothing to set up.
@@ -63,7 +71,7 @@ Codex writes your limits into its session logs under `~/.codex/sessions`. Dock U
 
 ## Privacy
 
-Dock Usage only reads those two local files, plus the notification list from cmux if you have it. It never goes online and never touches your login tokens.
+Dock Usage only reads those two local files, plus the notification list from cmux if you have it and the notification banners shown on screen. It never goes online and never touches your login tokens.
 
 ## Limits
 

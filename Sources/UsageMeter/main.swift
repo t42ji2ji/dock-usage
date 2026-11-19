@@ -4,18 +4,27 @@ import ServiceManagement
 // MARK: - Kind（同一支執行檔，靠 Info.plist 的 MeterKind 分成 Claude / GPT 兩個 app）
 
 enum Kind: String {
-    case claude, gpt
+    case claude, gpt, finder, trash
 
     var appPaths: [String] {
         switch self {
         case .claude: return ["/Applications/Claude.app"]
         case .gpt: return ["/Applications/ChatGPT.app", "/Applications/Codex.app"]
+        case .finder: return ["/System/Library/CoreServices/Finder.app"]
+        case .trash: return ["trash"]          // dockItems() 用這個名字記垃圾桶
         }
+    }
+    /// Finder／垃圾桶：顯示硬碟用量，畫得比 AI 用量淡
+    var isDisk: Bool { self == .finder || self == .trash }
+    var icon: NSImage? {
+        if self == .trash { return NSImage(named: NSImage.trashFullName) }
+        return appPaths.first { FileManager.default.fileExists(atPath: $0) }.map { NSWorkspace.shared.icon(forFile: $0) }
     }
     var tint: NSColor {
         switch self {
         case .claude: return NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)  // #D97757
         case .gpt: return NSColor(srgbRed: 0.06, green: 0.64, blue: 0.50, alpha: 1)     // #10A37F
+        case .finder, .trash: return NSColor(srgbRed: 0.25, green: 0.60, blue: 1.00, alpha: 1)
         }
     }
 }
@@ -123,8 +132,7 @@ var maskCache: [Kind: CGImage] = [:]
 /// 原 app 圖示的 alpha 轉成灰階遮罩（256px），裁切用
 func iconMask(_ kind: Kind) -> CGImage? {
     if let m = maskCache[kind] { return m }
-    guard let path = kind.appPaths.first(where: { FileManager.default.fileExists(atPath: $0) }) else { return nil }
-    let icon = NSWorkspace.shared.icon(forFile: path)
+    guard let icon = kind.icon else { return nil }
     let n = 256
     let rgba = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: n, pixelsHigh: n, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
     NSGraphicsContext.saveGraphicsState()
@@ -141,7 +149,7 @@ func iconMask(_ kind: Kind) -> CGImage? {
 }
 
 /// 原 app 圖示壓暗 + ASCII 字元格水位（5 小時）+ 兩側刻度（7 天）+ 百分比數字
-func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase: CGFloat, size: CGFloat = 512, showNumber: Bool = true) -> NSImage {
+func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase: CGFloat, size: CGFloat = 512, showNumber: Bool = true, label: String? = nil) -> NSImage {
     NSImage(size: NSSize(width: size, height: size), flipped: false) { _ in
         let s = size
         base?.draw(in: NSRect(x: 0, y: 0, width: s, height: s))
@@ -153,7 +161,8 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
 
         guard let short else { return true }
         let p = CGFloat(min(max(short, 0), 100)) / 100
-        let hot = short >= 80
+        let hot = short >= (kind.isDisk ? 90 : 80)
+        let light: CGFloat = kind.isDisk ? 0.5 : 1      // 硬碟用量畫淡一點
         let color = hot ? NSColor(srgbRed: 0.90, green: 0.28, blue: 0.30, alpha: 1) : kind.tint
 
         NSGraphicsContext.saveGraphicsState()
@@ -182,12 +191,12 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
         }
         let back = wave(.pi * 0.7, amp, -0.7)          // 後層反向流，比前層高一點、淡一點
         let lift = NSAffineTransform(); lift.translateX(by: 0, yBy: s * 0.025); back.transform(using: lift as AffineTransform)
-        NSColor.black.withAlphaComponent(0.20).setFill()
+        NSColor.black.withAlphaComponent(0.20 * light).setFill()
         back.fill()
         color.withAlphaComponent(0.30).setFill()
         back.fill()
         let front = wave(0, amp)
-        NSColor.black.withAlphaComponent(0.40).setFill()
+        NSColor.black.withAlphaComponent(0.40 * light).setFill()
         front.fill()
         color.withAlphaComponent(0.22).setFill()
         front.fill()
@@ -229,7 +238,7 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
                     ch = dim[Int(x * CGFloat(dim.count)) % dim.count]
                     col = .white; key = "w"; alpha = 0.06 + 0.06 * rnd(c, r, k)
                 }
-                cg.setAlpha(alpha)
+                cg.setAlpha(alpha * (light < 1 ? 0.6 : 1))
                 if rect.minY < level && rect.maxY > level {      // 水面那格只畫在波浪下
                     cg.saveGState(); front.addClip()
                     cg.draw(glyphImage(ch, col, glyph, cell, key), in: rect)
@@ -267,13 +276,13 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
 
         guard showNumber else { return true }
         // 數字（等寬）
-        let num = "\(Int(short.rounded()))"
+        let num = label ?? "\(Int(short.rounded()))"
         let shadow = NSShadow()
         shadow.shadowColor = NSColor.black.withAlphaComponent(0.85)
         shadow.shadowBlurRadius = s * 0.03
         let font = NSFont.monospacedSystemFont(ofSize: s * 0.26, weight: .heavy)
         let str = NSMutableAttributedString(string: num, attributes: [.font: font, .foregroundColor: NSColor.white, .shadow: shadow])
-        str.append(NSAttributedString(string: "%", attributes: [.font: NSFont.monospacedSystemFont(ofSize: s * 0.12, weight: .bold), .foregroundColor: NSColor.white.withAlphaComponent(0.85), .shadow: shadow]))
+        if label == nil { str.append(NSAttributedString(string: "%", attributes: [.font: NSFont.monospacedSystemFont(ofSize: s * 0.12, weight: .bold), .foregroundColor: NSColor.white.withAlphaComponent(0.85), .shadow: shadow])) }
         let sz = str.size()
         str.draw(at: NSPoint(x: body.midX - sz.width / 2, y: body.midY - sz.height / 2))
         return true
@@ -296,6 +305,8 @@ func dockItems() -> [String: AXUIElement] {
     for list in ax(AXUIElementCreateApplication(pid), kAXChildrenAttribute) as? [AXUIElement] ?? [] {
         for item in ax(list, kAXChildrenAttribute) as? [AXUIElement] ?? [] {
             if let url = ax(item, kAXURLAttribute) as? URL { out[url.path.hasSuffix("/") ? String(url.path.dropLast()) : url.path] = item }
+            if ax(item, kAXSubroleAttribute) as? String == "AXTrashDockItem" { out["trash"] = item }
+            if let t = ax(item, kAXTitleAttribute) as? String { out["title:" + t] = item }   // 通知用 app 名稱對應
         }
     }
     return out
@@ -368,13 +379,13 @@ func drawAttention(_ count: Int, size s: CGFloat, phase: CGFloat, left: Bool = f
 }
 
 /// 內容固定用 80pt（Dock 放大上限）畫成點陣圖；Dock 放大縮小時只改 layer 的框、GPU 縮放，不重畫
-func renderImage(kind: Kind, level: Double?, tick: Double?, phase: CGFloat, attention: Int = 0, badgeLeft: Bool = false) -> CGImage? {
+func renderImage(kind: Kind, level: Double?, tick: Double?, phase: CGFloat, attention: Int = 0, badgeLeft: Bool = false, label: String? = nil) -> CGImage? {
     let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 160, pixelsHigh: 160, bitsPerSample: 8, samplesPerPixel: 4,
                                hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
     rep.size = NSSize(width: 80, height: 80)
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-    if level != nil { renderIcon(kind: kind, base: nil, short: level, long: tick, phase: phase, size: 80).draw(in: NSRect(x: 0, y: 0, width: 80, height: 80)) }
+    if level != nil { renderIcon(kind: kind, base: nil, short: level, long: tick, phase: phase, size: 80, label: label).draw(in: NSRect(x: 0, y: 0, width: 80, height: 80)) }
     drawAttention(attention, size: 80, phase: phase, left: badgeLeft)
     NSGraphicsContext.restoreGraphicsState()
     return rep.cgImage
@@ -425,7 +436,7 @@ final class Overlay {
         let to = primary?.pct ?? 0
         shown += (to - shown) * (1 - pow(0.88, dt * 30))
         if abs(to - shown) < 0.05 { shown = to }
-        let t = Int(phase * 12)                          // 約 38 次/秒重畫，波浪才順；字元仍約 13 次/秒換
+        let t = Int(phase * (kind.isDisk ? 6 : 12))      // 約 38 次/秒重畫，波浪才順；字元仍約 13 次/秒換（硬碟的減半）
         if t != lastTick || abs(shown - lastLevel) > 0.01 || attention != lastAttention || nativeBadge != lastBadge {
             lastTick = t; lastLevel = shown; lastAttention = attention; lastBadge = nativeBadge
             layer.contents = renderImage(kind: kind, level: primary == nil ? nil : shown, tick: usage.short == nil ? nil : usage.long?.pct, phase: phase, attention: attention, badgeLeft: nativeBadge)
@@ -438,6 +449,58 @@ final class Overlay {
         layer.isHidden = false
         return true
     }
+}
+
+// MARK: - 通知：記下每個 app 最新跳出的通知橫幅，滑鼠停在它的 Dock 圖示上時顯示
+
+struct Note: Equatable { var title: String; var body: String }
+
+/// 讀畫面上正在顯示的通知橫幅（用的是同一個輔助使用權限）。回傳 [app 名稱: 通知]
+func visibleBanners() -> [String: Note] {
+    guard let pid = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.notificationcenterui").first?.processIdentifier else { return [:] }
+    var out: [String: Note] = [:]
+    func walk(_ e: AXUIElement, _ d: Int) {
+        if ax(e, kAXSubroleAttribute) as? String == "AXNotificationCenterBanner" {
+            let app = (ax(e, kAXDescriptionAttribute) as? String ?? "").components(separatedBy: ", ").first ?? ""
+            var n = Note(title: "", body: "")
+            for c in ax(e, kAXChildrenAttribute) as? [AXUIElement] ?? [] {
+                let v = ax(c, kAXValueAttribute) as? String ?? ""
+                switch ax(c, kAXIdentifierAttribute) as? String {
+                case "title": n.title = v
+                case "body": n.body = v
+                default: break
+                }
+            }
+            if !app.isEmpty, !(n.title.isEmpty && n.body.isEmpty) { out[app] = n }
+            return
+        }
+        if d < 6 { for c in ax(e, kAXChildrenAttribute) as? [AXUIElement] ?? [] { walk(c, d + 1) } }
+    }
+    for w in ax(AXUIElementCreateApplication(pid), kAXWindowsAttribute) as? [AXUIElement] ?? []
+    where ax(w, kAXSubroleAttribute) as? String == "AXSystemDialog" { walk(w, 0) }
+    return out
+}
+
+func renderNote(_ app: String, _ n: Note) -> NSImage {
+    let w: CGFloat = 260, pad: CGFloat = 10
+    let s = NSMutableAttributedString(string: n.title.isEmpty ? app : n.title, attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.white])
+    if !n.body.isEmpty { s.append(NSAttributedString(string: "\n" + n.body, attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.white.withAlphaComponent(0.8)])) }
+    let maxH: CGFloat = 16 * 4 + 2
+    let h = min(ceil(s.boundingRect(with: NSSize(width: w - pad * 2, height: 1000), options: [.usesLineFragmentOrigin]).height), maxH)
+    return NSImage(size: NSSize(width: w, height: h + pad * 2), flipped: false) { r in
+        NSColor.black.withAlphaComponent(0.72).setFill()
+        NSBezierPath(roundedRect: r, xRadius: 10, yRadius: 10).fill()
+        s.draw(with: NSRect(x: pad, y: pad, width: w - pad * 2, height: h), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+        return true
+    }
+}
+
+// MARK: - 硬碟
+
+func diskUsedPct() -> Double? {
+    guard let v = try? URL(fileURLWithPath: "/").resourceValues(forKeys: [.volumeTotalCapacityKey, .volumeAvailableCapacityForImportantUsageKey]),
+          let total = v.volumeTotalCapacity, total > 0, let free = v.volumeAvailableCapacityForImportantUsage else { return nil }
+    return 100 * (1 - Double(free) / Double(total))
 }
 
 // MARK: - cmux 通知
@@ -454,6 +517,7 @@ func unreadClaudeTabs() -> Int {
     guard (try? p.run()) != nil else { return 0 }
     let data = out.fileHandleForReading.readDataToEndOfFile()
     p.waitUntilExit()
+    if p.terminationStatus != 0 { log("cmux list-notifications exit \(p.terminationStatus): \(String(data: data.prefix(200), encoding: .utf8) ?? "")") }
     guard let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return 0 }
     let surfaces = list.filter { ($0["is_read"] as? Bool) == false && ($0["title"] as? String) == "Claude Code" }.compactMap { $0["surface_id"] as? String }
     return Set(surfaces).count
@@ -462,13 +526,17 @@ func unreadClaudeTabs() -> Int {
 // MARK: - App
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let overlays = [Overlay(kind: .claude), Overlay(kind: .gpt)]
+    let overlays = [Overlay(kind: .claude), Overlay(kind: .gpt), Overlay(kind: .finder), Overlay(kind: .trash)]
     var phase: CGFloat = 0
     var timer: Timer?
     var link: CADisplayLink?
     var fast = false
     var lastFrame = CACurrentMediaTime()
     var lastScan = Date.distantPast
+    var notes: [String: Note] = [:]
+    var titleItems: [String: AXUIElement] = [:]
+    let noteLayer = CALayer()
+    var shownNote: String?
     let queue = DispatchQueue(label: "dockusage.load", qos: .utility)
 
     func applicationDidFinishLaunching(_ n: Notification) {
@@ -487,6 +555,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.refreshAttention() }
         }
         schedule(fast: false)
+        noteLayer.isHidden = true
+        Host.shared.root.addSublayer(noteLayer)
+        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard AXIsProcessTrusted() else { return }
+            guard let self else { return }
+            for (app, n) in visibleBanners() where self.notes[app] != n {
+                self.notes[app] = n
+                log("note from \(app) (dock item: \(self.titleItems["title:" + app] != nil))")
+            }
+        }
+        // 打開那個 app 就算看過了
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] n in
+            if let name = (n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.localizedName { self?.notes[name] = nil }
+        }
     }
 
     /// 沒有任何介面：在 Finder 再開一次時，給一個能結束、能切換登入開啟的對話框
@@ -513,17 +595,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func refreshAttention() {
         queue.async {
             let n = unreadClaudeTabs()
-            DispatchQueue.main.async { self.overlays[0].attention = n }
+            DispatchQueue.main.async {
+                if n != self.overlays[0].attention { log("attention=\(n)") }
+                self.overlays[0].attention = n
+            }
         }
     }
 
     func refresh() {
         queue.async {
-            let c = loadClaude(), g = loadCodex()
+            let c = loadClaude(), g = loadCodex(), disk = diskUsedPct()
             let fix = { (u: Usage) in Usage(short: fresh(u.short), long: fresh(u.long), updated: u.updated) }
             DispatchQueue.main.async {
                 self.overlays[0].usage = fix(c)
                 self.overlays[1].usage = fix(g)
+                self.overlays[2].usage = disk.map { Usage(short: Window(pct: $0)) } ?? Usage()
+                // 垃圾桶只在硬碟快滿時出現（垃圾桶裡多大要完整磁碟取用權才讀得到，不讀）
+                self.overlays[3].usage = disk.map { $0 >= 85 ? Usage(short: Window(pct: $0)) : Usage() } ?? Usage()
             }
         }
     }
@@ -554,6 +642,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     var tickCost = 0.0
 
+    /// 滑鼠停在有通知的 Dock 圖示上：在圖示旁邊顯示最新一則（避開 Dock 自己的名稱標籤）
+    func hoverNote(visible: Bool) {
+        let m = NSEvent.mouseLocation
+        let screenH = Host.shared.window.frame.height
+        var hit: (String, CGRect)?
+        if visible {
+            for name in notes.keys {
+                guard let item = titleItems["title:" + name], let r = frame(of: item) else { continue }
+                let f = CGRect(x: r.minX, y: screenH - r.maxY, width: r.width, height: r.height)
+                if f.contains(m) { hit = (name, f); break }
+            }
+        }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        guard let (name, f) = hit, let n = notes[name] else { noteLayer.isHidden = true; shownNote = nil; return }
+        if shownNote != name + n.title + n.body {
+            shownNote = name + n.title + n.body
+            let img = renderNote(name, n)
+            let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(img.size.width * 2), pixelsHigh: Int(img.size.height * 2), bitsPerSample: 8, samplesPerPixel: 4,
+                                       hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+            rep.size = img.size
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            img.draw(in: NSRect(origin: .zero, size: img.size))
+            NSGraphicsContext.restoreGraphicsState()
+            noteLayer.contents = rep.cgImage
+            noteLayer.bounds = CGRect(origin: .zero, size: img.size)
+        }
+        let size = noteLayer.bounds.size
+        let screenW = Host.shared.window.frame.width
+        // Dock 在左：放右邊、名稱標籤下方；在右：放左邊；在下：放上方、名稱標籤上面
+        let origin: CGPoint
+        if f.midX < screenW / 3 { origin = CGPoint(x: f.maxX + 6, y: f.midY - 16 - size.height) }
+        else if f.midX > screenW * 2 / 3 { origin = CGPoint(x: f.minX - 6 - size.width, y: f.midY - 16 - size.height) }
+        else { origin = CGPoint(x: min(max(f.midX - size.width / 2, 8), screenW - size.width - 8), y: f.maxY + 34) }
+        noteLayer.frame = CGRect(origin: origin, size: size)
+        noteLayer.isHidden = false
+    }
+
     var lastTrusted: Bool?
     func frameTick() {
         let t = AXIsProcessTrusted()
@@ -562,6 +689,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if Date().timeIntervalSince(lastScan) > 2 || overlays.contains(where: { $0.item == nil && Date().timeIntervalSince(lastScan) > 0.5 }) {
             lastScan = Date()
             let items = dockItems()
+            titleItems = items.filter { $0.key.hasPrefix("title:") }
             for o in overlays {
                 o.item = o.kind.appPaths.lazy.compactMap { items[$0] }.first
                 o.nativeBadge = o.item.flatMap { ax($0, "AXStatusLabel") as? String }.map { !$0.isEmpty } ?? false
@@ -582,6 +710,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         CATransaction.setDisableActions(true)
         let anyVisible = overlays.map { $0.step(phase: phase, dt: dt) }.contains(true)
         CATransaction.commit()
+        hoverNote(visible: anyVisible)
         Host.shared.setVisible(anyVisible)
         if anyVisible != fast {
             log("visible=\(anyVisible) " + overlays.map { o in "\(o.kind) item=\(o.item != nil) frame=\(o.item.flatMap(frame).map { "\($0)" } ?? "-") layer=\(o.layer.frame) level=\(o.primary?.pct ?? -1)" }.joined(separator: " | "))
@@ -593,14 +722,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 // MARK: - main
 
 let args = CommandLine.arguments
+// 離屏截圖驗證：DockUsage --note <out.png>
+if args.count >= 3, args[1] == "--note" {
+    let img = renderNote("LINE", Note(title: "小明", body: "晚上要不要一起吃飯？我訂了七點的位子，在你公司附近那家拉麵店，記得帶傘喔今天會下雨"))
+    let rep = NSBitmapImageRep(data: img.tiffRepresentation!)!
+    try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: args[2]))
+    exit(0)
+}
+
 // 離屏截圖驗證：DockUsage --snapshot <claude|gpt> <水位%> <7d%|-> <out.png> [size] [--bare]
 if args.count >= 6, args[1] == "--snapshot", let k = Kind(rawValue: args[2]) {
-    let path = k.appPaths.first { FileManager.default.fileExists(atPath: $0) }
     let size = args.count > 6 ? CGFloat(Double(args[6]) ?? 512) : 512
     let bare = args.contains("--bare")
-    let base = path.map { NSWorkspace.shared.icon(forFile: $0) }
+    let base = k.icon
     let attn = args.firstIndex(of: "--attn").flatMap { Int(args[$0 + 1]) } ?? 0
-    let core = renderIcon(kind: k, base: nil, short: Double(args[3]), long: Double(args[4]), phase: 0.8, size: size)
+    let label = args.firstIndex(of: "--label").map { args[$0 + 1] }
+    let core = renderIcon(kind: k, base: nil, short: Double(args[3]), long: Double(args[4]), phase: 0.8, size: size, label: label)
     let overlay = NSImage(size: NSSize(width: size, height: size), flipped: false) { r in
         core.draw(in: r); drawAttention(attn, size: size, phase: 0.8); return true }
     // 模擬疊在真圖示上的樣子：先畫原圖示，再蓋透明層
