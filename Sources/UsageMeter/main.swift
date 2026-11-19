@@ -119,14 +119,14 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
 
         // 水面：兩層正弦波
         let level = body.minY + body.height * p
-        let amp = p > 0.01 && p < 0.99 ? s * 0.018 : 0
-        func wave(_ offset: CGFloat, _ a: CGFloat) -> NSBezierPath {
+        let amp = p > 0.01 && p < 0.99 ? s * 0.05 : 0
+        func wave(_ offset: CGFloat, _ a: CGFloat, _ dir: CGFloat = 1) -> NSBezierPath {
             let path = NSBezierPath()
             path.move(to: NSPoint(x: body.minX, y: body.minY))
             var x = body.minX
             while x <= body.maxX + 1 {
                 let t = (x - body.minX) / body.width
-                path.line(to: NSPoint(x: x, y: level + sin(t * .pi * 2 * 1.3 + phase + offset) * a))
+                path.line(to: NSPoint(x: x, y: level + sin(t * .pi * 2 * 1.3 + phase * dir + offset) * a))
                 x += s / 128
             }
             path.line(to: NSPoint(x: body.maxX, y: body.minY))
@@ -140,7 +140,7 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
         NSColor.black.withAlphaComponent(0.55).setFill()
         dark.fill()
         color.withAlphaComponent(0.35).setFill()
-        wave(.pi * 0.7, amp * 0.8).fill()
+        wave(.pi * 0.7, amp * 0.8, -0.7).fill()
         NSGraphicsContext.saveGraphicsState()
         front.addClip()
         base?.draw(in: NSRect(x: 0, y: 0, width: s, height: s))
@@ -366,7 +366,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let now = CACurrentMediaTime()
         let dt = min(now - lastFrame, 0.1)
         lastFrame = now
-        phase += 0.9 * CGFloat(dt)   // 約 7 秒流過一個波
+        phase += 3.2 * CGFloat(dt)   // 約 2 秒流過一個波
         let anyVisible = overlays.map { $0.step(phase: phase, dt: dt) }.contains(true)
         if anyVisible != fast {
             log("visible=\(anyVisible) " + overlays.map { o in "\(o.kind) item=\(o.item != nil) frame=\(o.item.flatMap(frame).map { "\($0)" } ?? "-") win=\(o.window.frame) level=\(o.primary?.pct ?? -1)" }.joined(separator: " | "))
