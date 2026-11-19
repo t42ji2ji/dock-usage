@@ -92,24 +92,64 @@ struct FeatureRow: View {
 struct StylePicker: View {
     @ObservedObject var m: PrefsModel
     var size: CGFloat = 92
+    @Namespace private var ns
     var body: some View {
         let k = heroKinds().first?.0 ?? .finder
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             ForEach(MaskStyle.allCases, id: \.self) { st in
-                VStack(spacing: 10) {
-                    LiveIcon(kind: k, level: 62, style: st, size: size)
-                    Text(st.title).font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(m.style == st ? .white : .white.opacity(0.55))
+                StyleCard(style: st, kind: k, size: size, selected: m.style == st, ns: ns) {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) { m.pick(st) }
                 }
-                .padding(14)
-                .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(m.style == st ? 0.12 : 0.04)))
-                .overlay(RoundedRectangle(cornerRadius: 16).stroke(.white.opacity(m.style == st ? 0.6 : 0), lineWidth: 2))
-                .contentShape(Rectangle())
-                .onTapGesture { m.pick(st) }
-                .onHover { inside in if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
-                .help(st.title)
             }
         }
+    }
+}
+
+/// 一張樣式卡：會動的預覽＋名稱；選中的那張有一圈亮框，換選時框滑過去
+struct StyleCard: View {
+    let style: MaskStyle
+    let kind: Kind
+    let size: CGFloat
+    let selected: Bool
+    let ns: Namespace.ID
+    let pick: () -> Void
+    @State private var hover = false
+    var body: some View {
+        Button(action: pick) {
+            VStack(spacing: 12) {
+                LiveIcon(kind: kind, level: 62, style: style, size: size)
+                    .scaleEffect(selected ? 1 : hover ? 1.04 : 0.96)
+                    .opacity(selected || hover ? 1 : 0.8)
+                HStack(spacing: 5) {
+                    if selected { Image(systemName: "checkmark.circle.fill").font(.system(size: 11, weight: .bold)).transition(.scale.combined(with: .opacity)) }
+                    Text(style.title).font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundStyle(.white.opacity(selected ? 1 : hover ? 0.8 : 0.5))
+            }
+            .padding(.horizontal, 14).padding(.top, 16).padding(.bottom, 12)
+            .background {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(.white.opacity(selected ? 0.10 : hover ? 0.06 : 0.03))
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(.white.opacity(hover && !selected ? 0.14 : 0.06), lineWidth: 1)
+                    if selected {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .strokeBorder(LinearGradient(colors: [.white.opacity(0.95), .white.opacity(0.4)], startPoint: .top, endPoint: .bottom), lineWidth: 1.5)
+                            .shadow(color: .white.opacity(0.18), radius: 8)
+                            .matchedGeometryEffect(id: "selection", in: ns)
+                    }
+                }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { h in
+            withAnimation(.easeOut(duration: 0.15)) { hover = h }
+            if h { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
+        }
+        .help(style.title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 

@@ -90,8 +90,8 @@ extension MaskStyle {
         switch self {
         case .ascii: return "ASCII"
         case .liquid: return L("Liquid", "液體")
-        case .dots: return L("Dots", "網點")
-        case .ring: return L("Ring", "外環")
+        case .dots: return L("LED", "LED 點陣")
+        case .ring: return L("Glow", "光邊")
         }
     }
 }

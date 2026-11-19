@@ -62,8 +62,9 @@ enum Kind: String {
 
 // MARK: - 遮蓋樣式
 
+/// 原始值是設定檔、--frames 和官網／影片素材腳本在用的名字，別改
 enum MaskStyle: String, CaseIterable {
-    case ascii, liquid, dots, ring
+    case ascii, liquid, dots, ring      // ASCII、液體、LED 點陣、光邊
 }
 /// 目前的樣式（設定改了就換）；截圖指令可以用 --style 指定
 var currentStyle = MaskStyle(rawValue: UserDefaults.standard.string(forKey: "style") ?? "") ?? .ascii
@@ -314,82 +315,144 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
         crest.stroke()
 
         case .liquid:
-            // 純液體：兩層半透明的水、由上往下變深，水裡有氣泡往上飄
-            // 用比圖示深的同色系，才不會跟同色的圖示（Claude）糊在一起
-            let deep = color.blended(withFraction: 0.35, of: .black)!
-            deep.withAlphaComponent(0.4 * (light < 1 ? 0.7 : 1)).setFill()
-            let back = wave(.pi * 0.7, amp, -0.7)
-            let lift = NSAffineTransform(); lift.translateX(by: 0, yBy: s * 0.03); back.transform(using: lift as AffineTransform)
-            back.fill()
-            NSGradient(starting: deep.withAlphaComponent(0.7 * (light < 1 ? 0.7 : 1)),
-                       ending: color.blended(withFraction: 0.6, of: .black)!.withAlphaComponent(0.9 * (light < 1 ? 0.7 : 1)))!.draw(in: front, angle: -90)
-            NSGraphicsContext.saveGraphicsState()
+            // 玻璃杯裡的液體：後層反向的淡波、由深到淺的液體、水面下一條亮帶、細亮水線、往上飄的空心氣泡
+            // 同色圖示（Claude）靠明暗分：水裡壓暗、水面最亮
+            let cg = NSGraphicsContext.current!.cgContext
+            let fade: CGFloat = light < 1 ? 0.75 : 1
+            let deep = color.blended(withFraction: 0.5, of: .black)!
+            let back = wave(.pi * 0.9, amp * 0.8, -0.8)
+            let lift = NSAffineTransform(); lift.translateX(by: 0, yBy: s * 0.02); back.transform(using: lift as AffineTransform)
+            deep.withAlphaComponent(0.30 * fade).setFill(); back.fill()
+            NSColor.black.withAlphaComponent(0.28 * light).setFill(); front.fill()
+            NSGradient(starting: deep.withAlphaComponent(0.78 * fade), ending: color.withAlphaComponent(0.42 * fade))!.draw(in: front, angle: 90)
+            cg.saveGState()
             front.addClip()
-            for i in 0..<7 {
-                let x = body.minX + body.width * (0.1 + 0.8 * rnd(i, 1, 0))
-                let speed = 0.08 + 0.06 * rnd(i, 2, 0)
-                let t = (phase * speed + rnd(i, 3, 0)).truncatingRemainder(dividingBy: 1)
-                let y = body.minY + (waterLevel - body.minY) * t
-                let r = s * (0.012 + 0.014 * rnd(i, 4, 0))
-                NSColor.white.withAlphaComponent(0.35 * (1 - t)).setFill()
-                NSBezierPath(ovalIn: NSRect(x: x + sin(phase + CGFloat(i)) * s * 0.01 - r, y: y - r, width: r * 2, height: r * 2)).fill()
-            }
-            NSGraphicsContext.restoreGraphicsState()
-            let crest = NSBezierPath()
-            var cx = body.minX - 2
-            crest.move(to: NSPoint(x: cx, y: waveY(cx)))
-            while cx <= body.maxX + 2 { cx += s / 64; crest.line(to: NSPoint(x: cx, y: waveY(cx))) }
-            crest.lineWidth = s * 0.008
-            NSColor.white.withAlphaComponent(amp > 0 ? 0.45 : 0).setStroke()
-            crest.stroke()
-
-        case .dots:
-            // 網點：水面以下是大圓點、會微微呼吸，水面以上只剩細點
-            NSColor.black.withAlphaComponent(0.3 * light).setFill()
-            front.fill()
-            let n = 9
-            let c2 = body.width / CGFloat(n)
-            for r in 0..<n {
-                for c in 0..<n {
-                    let center = NSPoint(x: body.minX + (CGFloat(c) + 0.5) * c2, y: body.minY + (CGFloat(r) + 0.5) * c2)
-                    let under = center.y < waveY(center.x)
-                    let breathe = 0.85 + 0.15 * sin(phase * 1.6 + CGFloat(c + r) * 0.7)
-                    let rad = under ? c2 * 0.36 * breathe : c2 * 0.07
-                    let col = under ? color.blended(withFraction: 0.35 + 0.25 * rnd(c, r, Int(phase)), of: .white)!.withAlphaComponent(0.9 * (light < 1 ? 0.7 : 1))
-                                    : NSColor.white.withAlphaComponent(0.25)
-                    col.setFill()
-                    NSBezierPath(ovalIn: NSRect(x: center.x - rad, y: center.y - rad, width: rad * 2, height: rad * 2)).fill()
+            // 杯壁的反光：左邊一道直的亮條
+            NSGradient(colors: [.clear, NSColor.white.withAlphaComponent(0.20 * fade), .clear])!
+                .draw(in: NSRect(x: body.minX + body.width * 0.06, y: body.minY, width: body.width * 0.11, height: body.height), angle: 0)
+            // 水面下的折射亮帶
+            let band = liquidLine(body: body, step: s / 64, waveY: { waveY($0) })
+            band.lineWidth = s * 0.07
+            NSColor.white.withAlphaComponent(0.13 * fade).setStroke(); band.stroke()
+            // 氣泡：每顆一輪一輪往上，換輪時換位置
+            let depth = waterLevel - body.minY
+            if depth > s * 0.12 {
+                for i in 0..<7 {
+                    let cyc = phase * (0.10 + 0.05 * rnd(i, 2, 0)) + rnd(i, 3, 0)
+                    let ci = Int(cyc.rounded(.down)), t = cyc - CGFloat(ci)
+                    let r = s * (0.008 + 0.010 * rnd(i, ci, 4)) * (0.8 + 0.4 * t)
+                    let x = body.minX + body.width * (0.14 + 0.72 * rnd(i, ci, 1)) + sin(phase * 1.3 + CGFloat(i) * 2) * s * 0.012
+                    let y = body.minY + r + (depth - r * 2) * t
+                    let a = min(1, t * 6) * min(1, (1 - t) * 4) * 0.6 * fade
+                    let o = NSBezierPath(ovalIn: NSRect(x: x - r, y: y - r, width: r * 2, height: r * 2))
+                    o.lineWidth = s * 0.006
+                    NSColor.white.withAlphaComponent(a * 0.8).setStroke(); o.stroke()
+                    NSColor.white.withAlphaComponent(a * 0.45).setFill(); o.fill()
                 }
             }
-
-        case .ring:
-            // 環：不蓋住圖示，只在邊緣畫一圈進度，從底部中間往左繞
-            let inset2 = s * 0.045
-            let rb = body.insetBy(dx: inset2, dy: inset2)
-            func pt(_ t: CGFloat) -> NSPoint {          // t: 0...1，超橢圓近似圓角方塊
-                let a = -CGFloat.pi / 2 - t * 2 * .pi
-                let cs = cos(a), sn = sin(a), e: CGFloat = 0.4
-                return NSPoint(x: rb.midX - (cs < 0 ? -1 : 1) * pow(abs(cs), e) * rb.width / 2 * -1,
-                               y: rb.midY + (sn < 0 ? -1 : 1) * pow(abs(sn), e) * rb.height / 2)
-            }
-            func arc(_ to: CGFloat) -> NSBezierPath {
-                let path = NSBezierPath()
-                let steps = max(2, Int(to * 160))
-                for i in 0...steps { let q = pt(to * CGFloat(i) / CGFloat(steps)); i == 0 ? path.move(to: q) : path.line(to: q) }
-                path.lineWidth = s * 0.055; path.lineCapStyle = .round
-                return path
-            }
-            // 底軌細細一條白線；進度是深色描邊＋亮一點的同色系，白底和同色底都看得到
-            let track = arc(1); track.lineWidth = s * 0.018
-            NSColor.white.withAlphaComponent(0.55).setStroke(); track.stroke()
-            if p > 0.005 {
-                let outline = arc(p); outline.lineWidth = s * 0.075
-                NSColor.black.withAlphaComponent(0.45).setStroke(); outline.stroke()
-                let glow = NSShadow(); glow.shadowColor = color; glow.shadowBlurRadius = s * (0.03 + 0.015 * sin(phase * 1.5))
-                NSGraphicsContext.saveGraphicsState(); glow.set()
-                color.blended(withFraction: 0.3, of: .white)!.setStroke(); arc(p).stroke()
+            cg.restoreGState()
+            // 後層水線（淡）＋前層水線（亮）
+            if amp > 0 {
+                NSGraphicsContext.saveGraphicsState()
+                (kind == .trash ? NSBezierPath(rect: body) : shape).addClip()      // 亮線不要畫到圖示外的陰影上
+                let bl = liquidLine(body: body, step: s / 64, waveY: { waveY($0, .pi * 0.9, amp * 0.8, -0.8) + s * 0.02 })
+                bl.lineWidth = s * 0.008
+                NSColor.white.withAlphaComponent(0.22 * fade).setStroke(); bl.stroke()
+                let crest = liquidLine(body: body, step: s / 64, waveY: { waveY($0) })
+                crest.lineWidth = s * 0.016
+                NSColor.white.withAlphaComponent(0.85).setStroke(); crest.stroke()
                 NSGraphicsContext.restoreGraphicsState()
             }
+
+        case .dots:
+            // LED 點陣：水位以下是暗底上發光的燈，一道光從底部往水面掃；水面那排照淹到多少調亮度；上面只剩熄掉的小點
+            let cg = NSGraphicsContext.current!.cgContext
+            let fade: CGFloat = light < 1 ? 0.75 : 1
+            NSColor.black.withAlphaComponent(0.22 * light).setFill(); front.fill()
+            color.blended(withFraction: 0.65, of: .black)!.withAlphaComponent(0.45 * fade).setFill(); front.fill()
+            let n = 11
+            let pitch = body.width / CGFloat(n), rowH = pitch * 0.87
+            let rows = Int((body.height / rowH).rounded(.down))
+            let lit = ledSprite(color.blended(withFraction: 0.5, of: .white)!, "\(kind)\(hot)")
+            let white = ledSprite(.white, "w")
+            let cyc = phase * 0.2
+            let scanY = body.minY - pitch * 2 + (waterLevel - body.minY + pitch * 4) * (cyc - cyc.rounded(.down))
+            let tw = Int(phase * 2)
+            // 只放完整落在圖示裡的燈，邊緣不會有被切一半的點
+            let inside = NSBezierPath(roundedRect: body.insetBy(dx: pitch * 0.4, dy: pitch * 0.4),
+                                      xRadius: kind == .trash ? pitch : body.width * 0.19, yRadius: kind == .trash ? pitch : body.width * 0.19)
+            for r in 0..<rows {
+                let cy = body.midY + (CGFloat(r) - CGFloat(rows - 1) / 2) * rowH
+                for c in 0..<(r % 2 == 0 ? n : n - 1) {
+                    let cx = body.minX + (CGFloat(c) + (r % 2 == 0 ? 0.5 : 1)) * pitch
+                    guard inside.contains(NSPoint(x: cx, y: cy)) else { continue }
+                    let cover = min(max((waveY(cx) - (cy - rowH / 2)) / rowH, 0), 1)
+                    if cover > 0 {
+                        let d = (cy - scanY) / (pitch * 1.4)
+                        let boost = waterLevel > cy ? exp(-d * d) : 0
+                        let rad = pitch * (0.27 + 0.06 * boost) * (0.55 + 0.45 * cover)
+                        let box = CGRect(x: cx - rad * 1.7, y: cy - rad * 1.7, width: rad * 3.4, height: rad * 3.4)
+                        cg.setAlpha((0.75 + 0.25 * boost) * (0.35 + 0.65 * cover) * fade)
+                        cg.draw(lit, in: box)
+                        let spark = rnd(c, r, tw) < 0.025 ? 0.7 : 0
+                        if boost > 0.05 || spark > 0 {
+                            cg.setAlpha(max(boost * 0.55, spark) * cover * fade)
+                            cg.draw(white, in: box.insetBy(dx: rad * 0.5, dy: rad * 0.5))
+                        }
+                    } else {
+                        let rad = pitch * 0.09
+                        cg.setAlpha(0.22 * fade)
+                        cg.draw(white, in: CGRect(x: cx - rad * 1.7, y: cy - rad * 1.7, width: rad * 3.4, height: rad * 3.4))
+                    }
+                }
+            }
+            cg.setAlpha(1)
+
+        case .ring:
+            // 光邊：圖示外緣從底部亮到水位，越接近水面越亮；一道光沿著兩側往上跑；水面一條細線，水裡只輕輕染一點色
+            let cg = NSGraphicsContext.current!.cgContext
+            let fade: CGFloat = light < 1 ? 0.75 : 1
+            NSGraphicsContext.saveGraphicsState()
+            (kind == .trash ? NSBezierPath(rect: body) : shape).addClip()      // 亮邊不要畫到圖示外的陰影上
+            NSColor.black.withAlphaComponent(0.24 * light).setFill(); front.fill()
+            color.withAlphaComponent(0.18 * fade).setFill(); front.fill()
+            let bright = color.blended(withFraction: 0.7, of: .white)!
+            cg.saveGState()
+            front.addClip()
+            cg.beginTransparencyLayer(auxiliaryInfo: nil)
+            NSGradient(starting: color.withAlphaComponent(0.55), ending: bright)!.draw(in: front, angle: 90)
+            let cyc = phase * 0.18
+            let runY = body.minY - s * 0.1 + (waterLevel - body.minY + s * 0.1) * (cyc - cyc.rounded(.down))
+            NSGradient(colors: [.clear, NSColor.white.withAlphaComponent(0.9), .clear])!
+                .draw(in: NSRect(x: 0, y: runY - s * 0.08, width: s, height: s * 0.16), angle: 90)
+            // 挖掉內部只留外緣：把圖示輪廓縮小一圈當成橡皮擦
+            if let mask = iconMask(kind) {
+                let w = s * 0.07, m = s * 0.015
+                let fx = (body.width - w * 2) / body.width, fy = (body.height - w * 2) / body.height
+                let full = CGRect(x: -m, y: -m, width: s + m * 2, height: s + m * 2)
+                let inner = CGRect(x: body.midX + (full.minX - body.midX) * fx, y: body.midY + (full.minY - body.midY) * fy,
+                                   width: full.width * fx, height: full.height * fy)
+                cg.saveGState()
+                cg.clip(to: inner, mask: mask)
+                cg.setBlendMode(.destinationOut)
+                cg.setFillColor(.black)
+                cg.fill(full)
+                cg.restoreGState()
+            }
+            cg.endTransparencyLayer()
+            cg.restoreGState()
+            if amp > 0 {
+                // 水線下一條暗線，白色、同色的圖示上也分得出水位
+                let under = liquidLine(body: body, step: s / 64, waveY: { waveY($0) - s * 0.014 })
+                under.lineWidth = s * 0.014
+                NSColor.black.withAlphaComponent(0.28 * light).setStroke(); under.stroke()
+                let crest = liquidLine(body: body, step: s / 64, waveY: { waveY($0) })
+                crest.lineWidth = s * 0.05
+                bright.withAlphaComponent(0.16 * fade).setStroke(); crest.stroke()
+                crest.lineWidth = s * 0.016
+                NSColor.white.withAlphaComponent(0.85).setStroke(); crest.stroke()
+            }
+            NSGraphicsContext.restoreGraphicsState()
         }
 
         // 7 天刻度：兩側的小括號
@@ -419,6 +482,37 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
         str.draw(at: NSPoint(x: body.midX - sz.width / 2, y: body.midY - sz.height / 2))
         return true
     }
+}
+
+/// 水線：沿著波浪的一條開放路徑（液體、光邊樣式用）
+private func liquidLine(body: NSRect, step: CGFloat, waveY: (CGFloat) -> CGFloat) -> NSBezierPath {
+    let path = NSBezierPath()
+    var x = body.minX - 2
+    path.move(to: NSPoint(x: x, y: waveY(x)))
+    while x <= body.maxX + 2 { x += step; path.line(to: NSPoint(x: x, y: waveY(x))) }
+    path.lineCapStyle = .round
+    return path
+}
+
+/// LED 燈點：實心亮核＋柔和光暈，畫一次存起來，之後每格只貼圖
+private var ledCache: [String: CGImage] = [:]
+private func ledSprite(_ color: NSColor, _ key: String) -> CGImage {
+    if let img = ledCache[key] { return img }
+    let n = 48
+    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: n, pixelsHigh: n, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+    let c = CGFloat(n) / 2, core = CGFloat(n) / 3.4
+    NSGradient(colors: [color.withAlphaComponent(0.35), color.withAlphaComponent(0)])!
+        .draw(fromCenter: NSPoint(x: c, y: c), radius: core * 0.9, toCenter: NSPoint(x: c, y: c), radius: c, options: [])
+    color.setFill()
+    NSBezierPath(ovalIn: NSRect(x: c - core, y: c - core, width: core * 2, height: core * 2)).fill()
+    NSGradient(starting: NSColor.white.withAlphaComponent(0.55), ending: NSColor.white.withAlphaComponent(0))!
+        .draw(fromCenter: NSPoint(x: c - core * 0.3, y: c + core * 0.35), radius: 0, toCenter: NSPoint(x: c - core * 0.3, y: c + core * 0.35), radius: core * 0.75, options: [])
+    NSGraphicsContext.restoreGraphicsState()
+    let img = rep.cgImage!
+    ledCache[key] = img
+    return img
 }
 
 // MARK: - Dock 位置
@@ -541,6 +635,7 @@ final class Overlay {
     var top: [SiteTime] = []      // 瀏覽器：今天前幾名的網站
     var total: Double = 0         // 瀏覽器：今天前景分鐘數
     var style = currentStyle
+    var ghost: CALayer?           // 換樣式時舊樣式的最後一格，淡出
 
     init(kind: Kind) {
         self.kind = kind
@@ -559,6 +654,7 @@ final class Overlay {
             return CGRect(x: n[0], y: n[1] + (kind == .gpt ? n[3] : 0) + wobble, width: n[2], height: n[3]) }
         guard let r = fake ?? item.flatMap(frame), fake != nil || onScreen(r), Prefs.on(kind.feature), primary != nil || attention > 0 else {
             layer.isHidden = true
+            ghost?.removeFromSuperlayer(); ghost = nil
             prevRect = nil
             return false
         }
@@ -573,7 +669,26 @@ final class Overlay {
         shown += (to - shown) * (1 - pow(0.88, dt * 30))
         if abs(to - shown) < 0.05 { shown = to }
         let t = Int(phase * (kind.isDisk || kind.isBrowser ? 6 : 12))      // 約 38 次/秒重畫，波浪才順；字元仍約 13 次/秒換（硬碟的減半）
-        if style != currentStyle { style = currentStyle; lastTick = -1 }
+        if style != currentStyle {
+            style = currentStyle; lastTick = -1
+            // 換樣式：舊的最後一格放在上面淡出、新的淡入，不要一下跳過去
+            if !layer.isHidden, let old = layer.contents {
+                ghost?.removeFromSuperlayer()
+                let g = CALayer()
+                g.contents = old; g.contentsGravity = .resize; g.opacity = 0
+                Host.shared.root.insertSublayer(g, above: layer)
+                ghost = g
+                for (l, from, to) in [(g, 1.0, 0.0), (layer, 0.0, 1.0)] {
+                    let a = CABasicAnimation(keyPath: "opacity")
+                    a.fromValue = from; a.toValue = to; a.duration = 0.35
+                    a.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                    l.add(a, forKey: "styleFade")
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self, weak g] in
+                    g?.removeFromSuperlayer(); if self?.ghost === g { self?.ghost = nil }
+                }
+            }
+        }
         if t != lastTick || abs(shown - lastLevel) > 0.01 || attention != lastAttention || nativeBadge != lastBadge {
             lastTick = t; lastLevel = shown; lastAttention = attention; lastBadge = nativeBadge
             layer.contents = renderImage(kind: kind, level: primary == nil ? nil : shown, tick: usage.short == nil ? nil : usage.long?.pct, phase: phase, attention: attention, badgeLeft: nativeBadge, label: label)
@@ -583,6 +698,7 @@ final class Overlay {
         let screenH = Host.shared.window.frame.height
         let side = min(pr.width, pr.height) - 2
         layer.frame = CGRect(x: pr.midX - side / 2, y: screenH - pr.midY - side / 2, width: side, height: side)
+        ghost?.frame = layer.frame
         layer.isHidden = false
         return true
     }
@@ -1017,7 +1133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 // MARK: - main
 
 let args = CommandLine.arguments
-// 影片素材：DockUsage --frames <kind> <style> <起始%> <結束%> <張數> <輸出資料夾> [size] [--bare] [--attn N] [--label 文字]
+// 影片素材：DockUsage --frames <kind> <style> <起始%> <結束%> <張數> <輸出資料夾> [size] [--bare] [--attn N] [--label 文字] [--phase0 影格序號]
 // 每張 phase 照 30fps 前進，水位從起始緩動到結束；透明 PNG，檔名 0000.png 起
 if args.count >= 8, args[1] == "--frames", let k = Kind(rawValue: args[2]), let st = MaskStyle(rawValue: args[3]),
    let a = Double(args[4]), let b = Double(args[5]), let n = Int(args[6]) {
@@ -1026,12 +1142,13 @@ if args.count >= 8, args[1] == "--frames", let k = Kind(rawValue: args[2]), let 
     let bare = args.contains("--bare")
     let attn = args.firstIndex(of: "--attn").flatMap { Int(args[$0 + 1]) } ?? 0
     let label = args.firstIndex(of: "--label").map { args[$0 + 1] }
+    let phase0 = args.firstIndex(of: "--phase0").flatMap { Int(args[$0 + 1]) } ?? 0     // 接續上一段：第一張的影格序號
     try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
     for i in 0..<n {
         let t = n > 1 ? Double(i) / Double(n - 1) : 1
         let e = t < 0.5 ? 4 * t * t * t : 1 - pow(-2 * t + 2, 3) / 2          // ease-in-out
         let level = a + (b - a) * e
-        let phase = CGFloat(i) / 30 * 3.2
+        let phase = CGFloat(i + phase0) / 30 * 3.2
         let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size), pixelsHigh: Int(size), bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)

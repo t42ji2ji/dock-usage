@@ -14,7 +14,7 @@ Your Claude and ChatGPT usage, drawn right on their Dock icons.
 
 ## What it shows
 
-Each icon fills from the bottom as you use up your **5-hour limit**. The number in the middle is the percentage. Two small ticks on the sides mark your **weekly limit**. Past 80% it turns red. Pick one of four looks: flickering ASCII characters, liquid, dots, or a ring around the edge.
+Each icon fills from the bottom as you use up your **5-hour limit**. The number in the middle is the percentage. Two small ticks on the sides mark your **weekly limit**. Past 80% it turns red. Pick one of four looks: flickering ASCII characters, liquid in glass, an LED dot matrix, or a glowing edge.
 
 - **Claude** shows your Claude plan limits, read from Claude Code.
 - **ChatGPT** shows your Codex limits on your ChatGPT plan, read from Codex.
