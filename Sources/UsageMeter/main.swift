@@ -172,7 +172,7 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
 
         guard let short else { return true }
         let p = CGFloat(min(max(short, 0), 100)) / 100
-        let hot = short >= (kind.isDisk ? 90 : 80)
+        let hot = short >= (kind.isDisk ? 90 : 80)      // 垃圾桶 27 樣以上轉紅
         let light: CGFloat = kind.isDisk ? 0.5 : 1      // 硬碟用量畫淡一點
         let color = hot ? NSColor(srgbRed: 0.90, green: 0.28, blue: 0.30, alpha: 1) : kind.tint
 
@@ -285,7 +285,7 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
         }
         NSGraphicsContext.restoreGraphicsState()
 
-        guard showNumber, kind != .trash else { return true }   // 垃圾桶只用水位提醒硬碟快滿，不寫數字
+        guard showNumber, kind != .trash else { return true }   // 垃圾桶只用水位表示東西多不多，不寫數字
         // 數字（等寬）
         let num = label ?? "\(Int(short.rounded()))"
         let shadow = NSShadow()
@@ -508,6 +508,14 @@ func renderNote(_ app: String, _ n: Note) -> NSImage {
 
 // MARK: - 硬碟
 
+/// 垃圾桶裡有幾樣東西。列出內容要完整磁碟取用權，但資料夾本身的 stat 讀得到：
+/// APFS 上資料夾的連結數＝裡面的項目數＋2
+func trashCount() -> Int? {
+    var st = stat()
+    guard stat(NSHomeDirectory() + "/.Trash", &st) == 0 else { return nil }
+    return max(0, Int(st.st_nlink) - 2)
+}
+
 func diskUsedPct() -> Double? {
     guard let v = try? URL(fileURLWithPath: "/").resourceValues(forKeys: [.volumeTotalCapacityKey, .volumeAvailableCapacityForImportantUsageKey]),
           let total = v.volumeTotalCapacity, total > 0, let free = v.volumeAvailableCapacityForImportantUsage else { return nil }
@@ -545,6 +553,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var lastFrame = CACurrentMediaTime()
     var lastScan = Date.distantPast
     var notes: [String: Note] = [:]
+    var lastTrash: Int?? = .none
     var titleItems: [String: AXUIElement] = [:]
     let noteLayer = CALayer()
     var shownNote: String?
@@ -615,14 +624,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func refresh() {
         queue.async {
-            let c = loadClaude(), g = loadCodex(), disk = diskUsedPct()
+            let c = loadClaude(), g = loadCodex(), disk = diskUsedPct(), trash = trashCount()
             let fix = { (u: Usage) in Usage(short: fresh(u.short), long: fresh(u.long), updated: u.updated) }
             DispatchQueue.main.async {
                 self.overlays[0].usage = fix(c)
                 self.overlays[1].usage = fix(g)
                 self.overlays[2].usage = disk.map { Usage(short: Window(pct: $0)) } ?? Usage()
-                // 垃圾桶只在硬碟快滿時出現（垃圾桶裡多大要完整磁碟取用權才讀得到，不讀）
-                self.overlays[3].usage = disk.map { $0 >= 85 ? Usage(short: Window(pct: $0)) : Usage() } ?? Usage()
+                // 垃圾桶：裡面有幾樣東西，30 樣算滿；空的就不畫
+                if trash != self.lastTrash { self.lastTrash = trash; log("trash items \(trash.map(String.init) ?? "nil")") }
+                self.overlays[3].usage = trash.map { $0 > 0 ? Usage(short: Window(pct: min(Double($0), 30) / 30 * 100)) : Usage() } ?? Usage()
             }
         }
     }
