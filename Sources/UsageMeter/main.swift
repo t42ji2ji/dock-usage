@@ -5,7 +5,7 @@ import SQLite3
 // MARK: - Kind（同一支執行檔，靠 Info.plist 的 MeterKind 分成 Claude / GPT 兩個 app）
 
 enum Kind: String {
-    case claude, gpt, finder, trash, ego, chrome
+    case claude, gpt, finder, trash, ego, chrome, arc, edge, brave
 
     var appPaths: [String] {
         switch self {
@@ -15,6 +15,19 @@ enum Kind: String {
         case .trash: return ["trash"]          // dockItems() 用這個名字記垃圾桶
         case .ego: return ["/Applications/ego lite.app"]
         case .chrome: return ["/Applications/Google Chrome.app"]
+        case .arc: return ["/Applications/Arc.app"]
+        case .edge: return ["/Applications/Microsoft Edge.app"]
+        case .brave: return ["/Applications/Brave Browser.app"]
+        }
+    }
+    var installed: Bool { self == .trash || appPaths.contains { FileManager.default.fileExists(atPath: $0) } }
+    var feature: Feature {
+        switch self {
+        case .claude: return .claude
+        case .gpt: return .gpt
+        case .finder: return .finder
+        case .trash: return .trash
+        default: return .browsers
         }
     }
     /// Chromium 系瀏覽器：資料夾底下每個設定檔的 History 記著每次造訪在前景停了多久
@@ -23,6 +36,9 @@ enum Kind: String {
         switch self {
         case .ego: return base + "Citro Labs/ego lite"
         case .chrome: return base + "Google/Chrome"
+        case .arc: return base + "Arc/User Data"
+        case .edge: return base + "Microsoft Edge"
+        case .brave: return base + "BraveSoftware/Brave-Browser"
         default: return nil
         }
     }
@@ -39,10 +55,18 @@ enum Kind: String {
         case .claude: return NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)  // #D97757
         case .gpt: return NSColor(srgbRed: 0.06, green: 0.64, blue: 0.50, alpha: 1)     // #10A37F
         case .finder, .trash: return NSColor(srgbRed: 0.25, green: 0.60, blue: 1.00, alpha: 1)
-        case .ego, .chrome: return NSColor(srgbRed: 0.55, green: 0.45, blue: 1.00, alpha: 1)
+        case .ego, .chrome, .arc, .edge, .brave: return NSColor(srgbRed: 0.55, green: 0.45, blue: 1.00, alpha: 1)
         }
     }
 }
+
+// MARK: - 遮蓋樣式
+
+enum MaskStyle: String, CaseIterable {
+    case ascii, liquid, dots, ring
+}
+/// 目前的樣式（設定改了就換）；截圖指令可以用 --style 指定
+var currentStyle = MaskStyle(rawValue: UserDefaults.standard.string(forKey: "style") ?? "") ?? .ascii
 
 // MARK: - Data
 
@@ -86,9 +110,11 @@ let home = FileManager.default.homeDirectoryForCurrentUser
 
 /// Claude：Claude Code 狀態列腳本寫出的 rate_limits（~/.claude/dock-usage/claude.json）
 func loadClaude() -> Usage {
-    let url = home.appendingPathComponent(".claude/dock-usage/claude.json")
+    let url = claudeHome.appendingPathComponent("dock-usage/claude.json")
     guard let data = try? Data(contentsOf: url),
-          let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return Usage() }
+          let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return Usage() }
+    // 自動設定的狀態列存的是 Claude Code 給的整份資料；手動加的片段只存 rate_limits
+    let j = raw["rate_limits"] as? [String: Any] ?? raw
     let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
     return Usage(short: window(j["five_hour"], pctKey: "used_percentage"),
                  long: window(j["seven_day"], pctKey: "used_percentage"),
@@ -172,7 +198,7 @@ func iconMask(_ kind: Kind) -> CGImage? {
 }
 
 /// 原 app 圖示壓暗 + ASCII 字元格水位（5 小時）+ 兩側刻度（7 天）+ 百分比數字
-func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase: CGFloat, size: CGFloat = 512, showNumber: Bool = true, label: String? = nil) -> NSImage {
+func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase: CGFloat, size: CGFloat = 512, showNumber: Bool = true, label: String? = nil, style: MaskStyle = currentStyle) -> NSImage {
     NSImage(size: NSSize(width: size, height: size), flipped: false) { _ in
         let s = size
         base?.draw(in: NSRect(x: 0, y: 0, width: s, height: s))
@@ -214,29 +240,31 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
             path.close()
             return path
         }
+        let front = wave(0, amp)
+        let cols = 10
+        let area = body
+        let cell = area.width / CGFloat(cols)
+        func rnd(_ c: Int, _ r: Int, _ k: Int) -> CGFloat {
+            var h = UInt64(truncatingIfNeeded: c &* 73856093 ^ r &* 19349663 ^ k &* 83492791)
+            h ^= h >> 33; h = h &* 0xff51afd7ed558ccd; h ^= h >> 33
+            return CGFloat(h % 10000) / 10000
+        }
+        switch style {
+        case .ascii:
         let back = wave(.pi * 0.7, amp, -0.7)          // 後層反向流，比前層高一點、淡一點
         let lift = NSAffineTransform(); lift.translateX(by: 0, yBy: s * 0.025); back.transform(using: lift as AffineTransform)
         NSColor.black.withAlphaComponent(0.20 * light).setFill()
         back.fill()
         color.withAlphaComponent(0.30).setFill()
         back.fill()
-        let front = wave(0, amp)
         NSColor.black.withAlphaComponent(0.40 * light).setFill()
         front.fill()
         color.withAlphaComponent(0.22).setFill()
         front.fill()
 
         // ASCII 格子：用掉的部分由密字元填滿、隨機跳字＋白色閃光；水面那排淡字元翻騰；空的部分只留淡點
-        let cols = 10
-        let area = body
-        let cell = area.width / CGFloat(cols)
         let tick = Int(phase * 4)                       // 每秒約 13 次換字
         let glyph = NSFont.monospacedSystemFont(ofSize: cell * 1.15, weight: .bold)
-        func rnd(_ c: Int, _ r: Int, _ k: Int) -> CGFloat {
-            var h = UInt64(truncatingIfNeeded: c &* 73856093 ^ r &* 19349663 ^ k &* 83492791)
-            h ^= h >> 33; h = h &* 0xff51afd7ed558ccd; h ^= h >> 33
-            return CGFloat(h % 10000) / 10000
-        }
         let cg = NSGraphicsContext.current!.cgContext
         cg.saveGState()
         let dense = Array("@#%&*+=$"), surf = Array(".:-=~"), dim = Array(".:-+=")
@@ -284,6 +312,85 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
         crest.lineWidth = s * 0.006
         NSColor.white.withAlphaComponent(amp > 0 ? 0.25 : 0).setStroke()
         crest.stroke()
+
+        case .liquid:
+            // 純液體：兩層半透明的水、由上往下變深，水裡有氣泡往上飄
+            // 用比圖示深的同色系，才不會跟同色的圖示（Claude）糊在一起
+            let deep = color.blended(withFraction: 0.35, of: .black)!
+            deep.withAlphaComponent(0.4 * (light < 1 ? 0.7 : 1)).setFill()
+            let back = wave(.pi * 0.7, amp, -0.7)
+            let lift = NSAffineTransform(); lift.translateX(by: 0, yBy: s * 0.03); back.transform(using: lift as AffineTransform)
+            back.fill()
+            NSGradient(starting: deep.withAlphaComponent(0.7 * (light < 1 ? 0.7 : 1)),
+                       ending: color.blended(withFraction: 0.6, of: .black)!.withAlphaComponent(0.9 * (light < 1 ? 0.7 : 1)))!.draw(in: front, angle: -90)
+            NSGraphicsContext.saveGraphicsState()
+            front.addClip()
+            for i in 0..<7 {
+                let x = body.minX + body.width * (0.1 + 0.8 * rnd(i, 1, 0))
+                let speed = 0.08 + 0.06 * rnd(i, 2, 0)
+                let t = (phase * speed + rnd(i, 3, 0)).truncatingRemainder(dividingBy: 1)
+                let y = body.minY + (waterLevel - body.minY) * t
+                let r = s * (0.012 + 0.014 * rnd(i, 4, 0))
+                NSColor.white.withAlphaComponent(0.35 * (1 - t)).setFill()
+                NSBezierPath(ovalIn: NSRect(x: x + sin(phase + CGFloat(i)) * s * 0.01 - r, y: y - r, width: r * 2, height: r * 2)).fill()
+            }
+            NSGraphicsContext.restoreGraphicsState()
+            let crest = NSBezierPath()
+            var cx = body.minX - 2
+            crest.move(to: NSPoint(x: cx, y: waveY(cx)))
+            while cx <= body.maxX + 2 { cx += s / 64; crest.line(to: NSPoint(x: cx, y: waveY(cx))) }
+            crest.lineWidth = s * 0.008
+            NSColor.white.withAlphaComponent(amp > 0 ? 0.45 : 0).setStroke()
+            crest.stroke()
+
+        case .dots:
+            // 網點：水面以下是大圓點、會微微呼吸，水面以上只剩細點
+            NSColor.black.withAlphaComponent(0.3 * light).setFill()
+            front.fill()
+            let n = 9
+            let c2 = body.width / CGFloat(n)
+            for r in 0..<n {
+                for c in 0..<n {
+                    let center = NSPoint(x: body.minX + (CGFloat(c) + 0.5) * c2, y: body.minY + (CGFloat(r) + 0.5) * c2)
+                    let under = center.y < waveY(center.x)
+                    let breathe = 0.85 + 0.15 * sin(phase * 1.6 + CGFloat(c + r) * 0.7)
+                    let rad = under ? c2 * 0.36 * breathe : c2 * 0.07
+                    let col = under ? color.blended(withFraction: 0.35 + 0.25 * rnd(c, r, Int(phase)), of: .white)!.withAlphaComponent(0.9 * (light < 1 ? 0.7 : 1))
+                                    : NSColor.white.withAlphaComponent(0.25)
+                    col.setFill()
+                    NSBezierPath(ovalIn: NSRect(x: center.x - rad, y: center.y - rad, width: rad * 2, height: rad * 2)).fill()
+                }
+            }
+
+        case .ring:
+            // 環：不蓋住圖示，只在邊緣畫一圈進度，從底部中間往左繞
+            let inset2 = s * 0.045
+            let rb = body.insetBy(dx: inset2, dy: inset2)
+            func pt(_ t: CGFloat) -> NSPoint {          // t: 0...1，超橢圓近似圓角方塊
+                let a = -CGFloat.pi / 2 - t * 2 * .pi
+                let cs = cos(a), sn = sin(a), e: CGFloat = 0.4
+                return NSPoint(x: rb.midX - (cs < 0 ? -1 : 1) * pow(abs(cs), e) * rb.width / 2 * -1,
+                               y: rb.midY + (sn < 0 ? -1 : 1) * pow(abs(sn), e) * rb.height / 2)
+            }
+            func arc(_ to: CGFloat) -> NSBezierPath {
+                let path = NSBezierPath()
+                let steps = max(2, Int(to * 160))
+                for i in 0...steps { let q = pt(to * CGFloat(i) / CGFloat(steps)); i == 0 ? path.move(to: q) : path.line(to: q) }
+                path.lineWidth = s * 0.055; path.lineCapStyle = .round
+                return path
+            }
+            // 底軌細細一條白線；進度是深色描邊＋亮一點的同色系，白底和同色底都看得到
+            let track = arc(1); track.lineWidth = s * 0.018
+            NSColor.white.withAlphaComponent(0.55).setStroke(); track.stroke()
+            if p > 0.005 {
+                let outline = arc(p); outline.lineWidth = s * 0.075
+                NSColor.black.withAlphaComponent(0.45).setStroke(); outline.stroke()
+                let glow = NSShadow(); glow.shadowColor = color; glow.shadowBlurRadius = s * (0.03 + 0.015 * sin(phase * 1.5))
+                NSGraphicsContext.saveGraphicsState(); glow.set()
+                color.blended(withFraction: 0.3, of: .white)!.setStroke(); arc(p).stroke()
+                NSGraphicsContext.restoreGraphicsState()
+            }
+        }
 
         // 7 天刻度：兩側的小括號
         if let long {
@@ -433,6 +540,7 @@ final class Overlay {
     var label: String?
     var top: [SiteTime] = []      // 瀏覽器：今天前幾名的網站
     var total: Double = 0         // 瀏覽器：今天前景分鐘數
+    var style = currentStyle
 
     init(kind: Kind) {
         self.kind = kind
@@ -449,7 +557,7 @@ final class Overlay {
             let n = v.split(separator: ",").compactMap { Double($0) }
             let wobble = n.count > 4 ? sin(CACurrentMediaTime() * 6) * n[4] : 0   // 測試用：上下擺動
             return CGRect(x: n[0], y: n[1] + (kind == .gpt ? n[3] : 0) + wobble, width: n[2], height: n[3]) }
-        guard let r = fake ?? item.flatMap(frame), fake != nil || onScreen(r), primary != nil || attention > 0 else {
+        guard let r = fake ?? item.flatMap(frame), fake != nil || onScreen(r), Prefs.on(kind.feature), primary != nil || attention > 0 else {
             layer.isHidden = true
             prevRect = nil
             return false
@@ -465,6 +573,7 @@ final class Overlay {
         shown += (to - shown) * (1 - pow(0.88, dt * 30))
         if abs(to - shown) < 0.05 { shown = to }
         let t = Int(phase * (kind.isDisk || kind.isBrowser ? 6 : 12))      // 約 38 次/秒重畫，波浪才順；字元仍約 13 次/秒換（硬碟的減半）
+        if style != currentStyle { style = currentStyle; lastTick = -1 }
         if t != lastTick || abs(shown - lastLevel) > 0.01 || attention != lastAttention || nativeBadge != lastBadge {
             lastTick = t; lastLevel = shown; lastAttention = attention; lastBadge = nativeBadge
             layer.contents = renderImage(kind: kind, level: primary == nil ? nil : shown, tick: usage.short == nil ? nil : usage.long?.pct, phase: phase, attention: attention, badgeLeft: nativeBadge, label: label)
@@ -540,6 +649,7 @@ func withCopiedDB<T>(_ f: String, _ body: (OpaquePointer) -> T) -> T? {
     return body(db)
 }
 
+var faviconCache: [String: Data] = [:]
 /// 從瀏覽器自己的 Favicons 資料庫找這個網站的小圖示（最接近 32px 的那張）
 func favicon(_ host: String, profiles: [String]) -> Data? {
     for p in profiles {
@@ -587,7 +697,7 @@ func browserToday(_ root: String) -> (total: Double, top: [SiteTime])? {
         }
     }
     let top = byHost.map { SiteTime(host: $0.key, minutes: $0.value) }.filter { $0.minutes >= 1 }.sorted { $0.minutes > $1.minutes }.prefix(5)
-        .map { var t = $0; t.icon = favicon(t.host, profiles: used); return t }
+        .map { var t = $0; t.icon = faviconCache[t.host] ?? favicon(t.host, profiles: used); faviconCache[t.host] = t.icon; return t }
     return (byHost.values.reduce(0, +), top)
 }
 
@@ -647,7 +757,8 @@ func diskUsedPct() -> Double? {
 
 // MARK: - cmux 通知
 
-let cmuxCLI = "/Applications/cmux.app/Contents/Resources/bin/cmux"
+let cmuxCLI = ["/Applications/cmux.app", "/Applications/cmux NIGHTLY.app", NSHomeDirectory() + "/Applications/cmux.app"]
+    .map { $0 + "/Contents/Resources/bin/cmux" }.first { FileManager.default.isExecutableFile(atPath: $0) } ?? ""
 
 func unreadClaudeTabs() -> Int {
     let p = Process()
@@ -668,7 +779,8 @@ func unreadClaudeTabs() -> Int {
 // MARK: - App
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let overlays = [Overlay(kind: .claude), Overlay(kind: .gpt), Overlay(kind: .finder), Overlay(kind: .trash), Overlay(kind: .ego), Overlay(kind: .chrome)]
+    let overlays = [Kind.claude, .gpt, .finder, .trash, .ego, .chrome, .arc, .edge, .brave].filter { $0.installed }.map { Overlay(kind: $0) }
+    func ov(_ k: Kind) -> Overlay? { overlays.first { $0.kind == k } }
     var phase: CGFloat = 0
     var timer: Timer?
     var link: CADisplayLink?
@@ -676,14 +788,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var lastFrame = CACurrentMediaTime()
     var lastScan = Date.distantPast
     var notes: [String: Note] = [:]
-    var lastTrash: Int?? = .none
     var titleItems: [String: AXUIElement] = [:]
     let noteLayer = CALayer()
     var shownNote: String?
     let queue = DispatchQueue(label: "dockusage.load", qos: .utility)
 
+    var window: NSWindow?
+    let model = PrefsModel()
+
+    func showOnboarding(at step: Step = .welcome) {
+        window?.close()
+        let v = Onboarding(m: model, step: step, finish: { [weak self] in
+            Prefs.onboarded = true
+            UserDefaults.standard.removeObject(forKey: "onboardingStep")
+            self?.window?.close()
+        }, relaunch: { s in
+            UserDefaults.standard.set(s.rawValue, forKey: "onboardingStep")
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/bin/sh")
+            p.arguments = ["-c", "sleep 0.6; /usr/bin/open -n \"$0\"", Bundle.main.bundlePath]
+            try? p.run()
+            NSApp.terminate(nil)
+        })
+        window = makeWindow(v, size: NSSize(width: 720, height: 540), title: "Dock Usage")
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+    }
+
+    func showSettings() {
+        window?.close()
+        model.trusted = AXIsProcessTrusted(); model.claude = claudeSetupState()
+        window = makeWindow(SettingsView(m: model, showWelcome: { [weak self] in self?.showOnboarding() }), size: NSSize(width: 600, height: 640), title: "Dock Usage")
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+    }
+
     func applicationDidFinishLaunching(_ n: Notification) {
-        if !AXIsProcessTrusted() {
+        Prefs.migrate()
+        installMenu()
+        NotificationCenter.default.addObserver(forName: .prefsChanged, object: nil, queue: .main) { [weak self] _ in
+            self?.refresh(); self?.refreshBrowsers(); self?.refreshAttention()
+        }
+        if !Prefs.onboarded {
+            showOnboarding(at: Step(rawValue: UserDefaults.standard.integer(forKey: "onboardingStep")) ?? .welcome)
+        } else if !AXIsProcessTrusted() {
             // 讀 Dock 圖示位置要「輔助使用」權限；第一次會跳系統的授權視窗
             AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary)
         }
@@ -694,7 +842,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         refresh()
         Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in self?.refresh() }
-        if FileManager.default.isExecutableFile(atPath: cmuxCLI) {
+        if !cmuxCLI.isEmpty {
             Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.refreshAttention() }
         }
         schedule(fast: false)
@@ -703,12 +851,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refreshBrowsers() }
         Host.shared.root.addSublayer(noteLayer)
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            guard AXIsProcessTrusted() else { return }
-            guard let self else { return }
-            for (app, n) in visibleBanners() where self.notes[app] != n {
-                self.notes[app] = n
-                log("note from \(app) (dock item: \(self.titleItems["title:" + app] != nil))")
-            }
+            guard let self, AXIsProcessTrusted(), Prefs.on(.notifications) else { self?.notes = [:]; return }
+            for (app, n) in visibleBanners() where self.notes[app] != n { self.notes[app] = n }
         }
         // 打開那個 app 就算看過了
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] n in
@@ -716,23 +860,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 沒有任何介面：在 Finder 再開一次時，給一個能結束、能切換登入開啟的對話框
+    /// 沒有選單列也沒有 Dock 圖示：在 Finder 再開一次時打開設定（還沒走完導覽就回到導覽）
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        let zh = (Locale.preferredLanguages.first ?? "en").hasPrefix("zh")
-        let a = NSAlert()
-        a.messageText = zh ? "Dock Usage 正在執行" : "Dock Usage is running"
-        a.informativeText = AXIsProcessTrusted()
-            ? (zh ? "用量會疊在 Dock 裡的 Claude 和 ChatGPT 圖示上。" : "Usage is drawn on the Claude and ChatGPT icons in your Dock.")
-            : (zh ? "需要在「系統設定 › 隱私權與安全性 › 輔助使用」允許 Dock Usage，才能找到 Dock 圖示的位置。" : "Allow Dock Usage in System Settings › Privacy & Security › Accessibility so it can find the icons in your Dock.")
-        a.addButton(withTitle: zh ? "繼續執行" : "Keep Running")
-        a.addButton(withTitle: zh ? "結束" : "Quit")
-        let login = NSButton(checkboxWithTitle: zh ? "登入時開啟" : "Open at Login", target: nil, action: nil)
-        login.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        a.accessoryView = login
-        NSApp.activate()
-        let r = a.runModal()
-        if login.state == .on { try? SMAppService.mainApp.register() } else { try? SMAppService.mainApp.unregister() }
-        if r == .alertSecondButtonReturn { NSApp.terminate(nil) }
+        if Prefs.onboarded { showSettings() } else { showOnboarding(at: Step(rawValue: UserDefaults.standard.integer(forKey: "onboardingStep")) ?? .welcome) }
         return false
     }
 
@@ -740,17 +870,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func refreshAttention() {
         queue.async {
             let n = unreadClaudeTabs()
-            DispatchQueue.main.async {
-                if n != self.overlays[0].attention { log("attention=\(n)") }
-                self.overlays[0].attention = n
-            }
+            DispatchQueue.main.async { self.ov(.claude)?.attention = Prefs.on(.cmuxDot) ? n : 0 }
         }
     }
 
     /// 瀏覽器：今天在前景的總時間（8 小時算滿）＋前五名網站，每分鐘讀一次
     func refreshBrowsers() {
         queue.async {
-            let stats = self.overlays.filter { $0.kind.isBrowser }.map { ($0, $0.kind.historyRoot.flatMap(browserToday)) }
+            let stats = self.overlays.filter { $0.kind.isBrowser && $0.item != nil && Prefs.on(.browsers) }.map { ($0, $0.kind.historyRoot.flatMap(browserToday)) }
             DispatchQueue.main.async {
                 for (o, st) in stats {
                     guard let st, st.total >= 1 else { o.usage = Usage(); o.top = []; continue }
@@ -768,12 +895,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let c = loadClaude(), g = loadCodex(), disk = diskUsedPct(), trash = trashCount()
             let fix = { (u: Usage) in Usage(short: fresh(u.short), long: fresh(u.long), updated: u.updated) }
             DispatchQueue.main.async {
-                self.overlays[0].usage = fix(c)
-                self.overlays[1].usage = fix(g)
-                self.overlays[2].usage = disk.map { Usage(short: Window(pct: $0)) } ?? Usage()
+                self.ov(.claude)?.usage = fix(c)
+                self.ov(.gpt)?.usage = fix(g)
+                self.ov(.finder)?.usage = disk.map { Usage(short: Window(pct: $0)) } ?? Usage()
                 // 垃圾桶：裡面有幾樣東西，30 樣算滿；空的就不畫
-                if trash != self.lastTrash { self.lastTrash = trash; log("trash items \(trash.map(String.init) ?? "nil")") }
-                self.overlays[3].usage = trash.map { $0 > 0 ? Usage(short: Window(pct: min(Double($0), 30) / 30 * 100)) : Usage() } ?? Usage()
+                self.ov(.trash)?.usage = trash.map { $0 > 0 ? Usage(short: Window(pct: min(Double($0), 30) / 30 * 100)) : Usage() } ?? Usage()
             }
         }
     }
@@ -855,7 +981,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let t = AXIsProcessTrusted()
         if t != lastTrusted { lastTrusted = t; log("trusted=\(t)") }
         guard t else { return }
-        if Date().timeIntervalSince(lastScan) > 2 || overlays.contains(where: { $0.item == nil && Date().timeIntervalSince(lastScan) > 0.5 }) {
+        if Date().timeIntervalSince(lastScan) > 2 {
             lastScan = Date()
             let items = dockItems()
             titleItems = items.filter { $0.key.hasPrefix("title:") }
@@ -914,6 +1040,7 @@ if args.count >= 6, args[1] == "--snapshot", let k = Kind(rawValue: args[2]) {
     let base = k.icon
     let attn = args.firstIndex(of: "--attn").flatMap { Int(args[$0 + 1]) } ?? 0
     let label = args.firstIndex(of: "--label").map { args[$0 + 1] }
+    if let i = args.firstIndex(of: "--style"), let st = MaskStyle(rawValue: args[i + 1]) { currentStyle = st }
     let core = renderIcon(kind: k, base: nil, short: Double(args[3]), long: Double(args[4]), phase: 0.8, size: size, label: label)
     let overlay = NSImage(size: NSSize(width: size, height: size), flipped: false) { r in
         core.draw(in: r); drawAttention(attn, size: size, phase: 0.8); return true }
