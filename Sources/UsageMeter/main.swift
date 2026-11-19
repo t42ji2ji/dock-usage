@@ -278,6 +278,8 @@ final class Overlay {
     var shown: Double = 0
     var item: AXUIElement?
     var lastTick = -1
+    var prevRect: CGRect?
+    static let lead = CGFloat(Double(ProcessInfo.processInfo.environment["DOCKUSAGE_LEAD"] ?? "") ?? 1.0)
     var lastLevel = 0.0
 
     init(kind: Kind) {
@@ -302,10 +304,18 @@ final class Overlay {
             let n = v.split(separator: ",").compactMap { Double($0) }; return CGRect(x: n[0], y: n[1] + (kind == .gpt ? n[3] : 0), width: n[2], height: n[3]) }
         guard let r = fake ?? item.flatMap(frame), fake != nil || onScreen(r), primary != nil else {
             if window.isVisible { window.orderOut(nil) }
+            prevRect = nil
             return false
         }
+        // Dock 讀到的位置要等下一格才畫得出來：照上一格的移動量往前推一格（大跳就不推，避免出現/消失時亂飛）
+        var pr = r
+        if let p = prevRect, abs(r.minY - p.minY) < 40, abs(r.height - p.height) < 20 {
+            pr = CGRect(x: r.minX + (r.minX - p.minX) * Self.lead, y: r.minY + (r.minY - p.minY) * Self.lead,
+                        width: r.width + (r.width - p.width) * Self.lead, height: r.height + (r.height - p.height) * Self.lead)
+        }
+        prevRect = r
         let primaryH = CGDisplayBounds(CGMainDisplayID()).height
-        let f = NSRect(x: r.minX, y: primaryH - r.maxY, width: r.width, height: r.height)
+        let f = NSRect(x: pr.minX, y: primaryH - pr.maxY, width: pr.width, height: pr.height)
         let to = primary?.pct ?? 0
         shown += (to - shown) * (1 - pow(0.88, dt * 30))
         if abs(to - shown) < 0.05 { shown = to }
