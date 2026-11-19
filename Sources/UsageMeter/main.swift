@@ -1,10 +1,11 @@
 import Cocoa
 import ServiceManagement
+import SQLite3
 
 // MARK: - Kind（同一支執行檔，靠 Info.plist 的 MeterKind 分成 Claude / GPT 兩個 app）
 
 enum Kind: String {
-    case claude, gpt, finder, trash
+    case claude, gpt, finder, trash, ego, chrome
 
     var appPaths: [String] {
         switch self {
@@ -12,8 +13,20 @@ enum Kind: String {
         case .gpt: return ["/Applications/ChatGPT.app", "/Applications/Codex.app"]
         case .finder: return ["/System/Library/CoreServices/Finder.app"]
         case .trash: return ["trash"]          // dockItems() 用這個名字記垃圾桶
+        case .ego: return ["/Applications/ego lite.app"]
+        case .chrome: return ["/Applications/Google Chrome.app"]
         }
     }
+    /// Chromium 系瀏覽器：資料夾底下每個設定檔的 History 記著每次造訪在前景停了多久
+    var historyRoot: String? {
+        let base = NSHomeDirectory() + "/Library/Application Support/"
+        switch self {
+        case .ego: return base + "Citro Labs/ego lite"
+        case .chrome: return base + "Google/Chrome"
+        default: return nil
+        }
+    }
+    var isBrowser: Bool { historyRoot != nil }
     /// Finder／垃圾桶：顯示硬碟用量，畫得比 AI 用量淡
     var isDisk: Bool { self == .finder || self == .trash }
     var icon: NSImage? {
@@ -26,6 +39,7 @@ enum Kind: String {
         case .claude: return NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)  // #D97757
         case .gpt: return NSColor(srgbRed: 0.06, green: 0.64, blue: 0.50, alpha: 1)     // #10A37F
         case .finder, .trash: return NSColor(srgbRed: 0.25, green: 0.60, blue: 1.00, alpha: 1)
+        case .ego, .chrome: return NSColor(srgbRed: 0.55, green: 0.45, blue: 1.00, alpha: 1)
         }
     }
 }
@@ -173,7 +187,7 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
         guard let short else { return true }
         let p = CGFloat(min(max(short, 0), 100)) / 100
         let hot = short >= (kind.isDisk ? 90 : 80)      // 垃圾桶 27 樣以上轉紅
-        let light: CGFloat = kind.isDisk ? 0.5 : 1      // 硬碟用量畫淡一點
+        let light: CGFloat = kind.isDisk || kind.isBrowser ? 0.5 : 1      // 硬碟、瀏覽器畫淡一點
         let color = hot ? NSColor(srgbRed: 0.90, green: 0.28, blue: 0.30, alpha: 1) : kind.tint
 
         NSGraphicsContext.saveGraphicsState()
@@ -416,6 +430,9 @@ final class Overlay {
     var nativeBadge = false   // Dock 上這個 app 自己有紅點
     var lastAttention = 0
     var lastBadge = false
+    var label: String?
+    var top: [SiteTime] = []      // 瀏覽器：今天前幾名的網站
+    var total: Double = 0         // 瀏覽器：今天前景分鐘數
 
     init(kind: Kind) {
         self.kind = kind
@@ -447,10 +464,10 @@ final class Overlay {
         let to = primary?.pct ?? 0
         shown += (to - shown) * (1 - pow(0.88, dt * 30))
         if abs(to - shown) < 0.05 { shown = to }
-        let t = Int(phase * (kind.isDisk ? 6 : 12))      // 約 38 次/秒重畫，波浪才順；字元仍約 13 次/秒換（硬碟的減半）
+        let t = Int(phase * (kind.isDisk || kind.isBrowser ? 6 : 12))      // 約 38 次/秒重畫，波浪才順；字元仍約 13 次/秒換（硬碟的減半）
         if t != lastTick || abs(shown - lastLevel) > 0.01 || attention != lastAttention || nativeBadge != lastBadge {
             lastTick = t; lastLevel = shown; lastAttention = attention; lastBadge = nativeBadge
-            layer.contents = renderImage(kind: kind, level: primary == nil ? nil : shown, tick: usage.short == nil ? nil : usage.long?.pct, phase: phase, attention: attention, badgeLeft: nativeBadge)
+            layer.contents = renderImage(kind: kind, level: primary == nil ? nil : shown, tick: usage.short == nil ? nil : usage.long?.pct, phase: phase, attention: attention, badgeLeft: nativeBadge, label: label)
         }
         // 圖示在 Dock 項目框裡置中，邊長＝框的短邊減 2pt（tilesize 37 時框高 39；2026-11-19 校準截圖量過）
         // AX 座標左上為原點；host 視窗蓋住主螢幕，layer 座標左下為原點
@@ -506,6 +523,66 @@ func renderNote(_ app: String, _ n: Note) -> NSImage {
     }
 }
 
+// MARK: - 瀏覽器
+
+struct SiteTime: Equatable { var host: String; var minutes: Double }
+
+/// 今天在這個瀏覽器（所有設定檔）前景停留的分鐘數，和前五名網站。
+/// History 是 SQLite 而且瀏覽器開著時被鎖住，所以複製一份來讀；只讀今天的造訪
+func browserToday(_ root: String) -> (total: Double, top: [SiteTime])? {
+    let fm = FileManager.default
+    guard let profiles = try? fm.contentsOfDirectory(atPath: root) else { return nil }
+    let start = Calendar.current.startOfDay(for: Date())
+    let since = Int64((start.timeIntervalSince1970 + 11_644_473_600) * 1_000_000)   // Chromium 時間：1601 年起的微秒
+    let tmp = NSTemporaryDirectory() + "dockusage-history"
+    var byHost: [String: Double] = [:]
+    for p in profiles {
+        let f = root + "/" + p + "/History"
+        let mod = [f, f + "-wal"].compactMap { (try? fm.attributesOfItem(atPath: $0))?[.modificationDate] as? Date }.max()
+        guard let mod, mod >= start else { continue }
+        for ext in ["", "-wal", "-shm"] { try? fm.removeItem(atPath: tmp + ext) }
+        guard (try? fm.copyItem(atPath: f, toPath: tmp)) != nil else { continue }
+        try? fm.copyItem(atPath: f + "-wal", toPath: tmp + "-wal")
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(tmp, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK else { sqlite3_close(db); continue }
+        var q: OpaquePointer?
+        let sql = "select u.url, sum(c.total_foreground_duration) from visits v join urls u on u.id = v.url join context_annotations c on c.visit_id = v.id where v.visit_time > ? group by u.url"
+        if sqlite3_prepare_v2(db, sql, -1, &q, nil) == SQLITE_OK {
+            sqlite3_bind_int64(q, 1, since)
+            while sqlite3_step(q) == SQLITE_ROW {
+                guard let c = sqlite3_column_text(q, 0), let host = URL(string: String(cString: c))?.host, !host.isEmpty else { continue }
+                let h = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+                byHost[h, default: 0] += Double(sqlite3_column_int64(q, 1)) / 60_000_000
+            }
+        }
+        sqlite3_finalize(q)
+        sqlite3_close(db)
+    }
+    for ext in ["", "-wal", "-shm"] { try? fm.removeItem(atPath: tmp + ext) }
+    let top = byHost.map { SiteTime(host: $0.key, minutes: $0.value) }.filter { $0.minutes >= 1 }.sorted { $0.minutes > $1.minutes }.prefix(5)
+    return (byHost.values.reduce(0, +), Array(top))
+}
+
+func fmtMinutes(_ m: Double) -> String { m >= 60 ? "\(Int(m) / 60)h \(Int(m) % 60)m" : "\(Int(m))m" }
+
+func renderTop(_ total: Double, _ top: [SiteTime]) -> NSImage {
+    let zh = (Locale.preferredLanguages.first ?? "en").hasPrefix("zh")
+    let w: CGFloat = 220, pad: CGFloat = 10
+    let para = NSMutableParagraphStyle()
+    para.tabStops = [NSTextTab(textAlignment: .right, location: w - pad * 2)]
+    let s = NSMutableAttributedString(string: (zh ? "今天" : "Today") + "\t" + fmtMinutes(total), attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.white, .paragraphStyle: para])
+    for t in top {
+        s.append(NSAttributedString(string: "\n" + (t.host.count > 20 ? t.host.prefix(19) + "…" : t.host) + "\t" + fmtMinutes(t.minutes), attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular), .foregroundColor: NSColor.white.withAlphaComponent(0.85), .paragraphStyle: para]))
+    }
+    let h = ceil(s.boundingRect(with: NSSize(width: w - pad * 2, height: 1000), options: [.usesLineFragmentOrigin]).height)
+    return NSImage(size: NSSize(width: w, height: h + pad * 2), flipped: false) { r in
+        NSColor.black.withAlphaComponent(0.72).setFill()
+        NSBezierPath(roundedRect: r, xRadius: 10, yRadius: 10).fill()
+        s.draw(with: NSRect(x: pad, y: pad, width: w - pad * 2, height: h), options: [.usesLineFragmentOrigin])
+        return true
+    }
+}
+
 // MARK: - 硬碟
 
 /// 垃圾桶裡有幾樣東西。列出內容要完整磁碟取用權，但資料夾本身的 stat 讀得到：
@@ -545,7 +622,7 @@ func unreadClaudeTabs() -> Int {
 // MARK: - App
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let overlays = [Overlay(kind: .claude), Overlay(kind: .gpt), Overlay(kind: .finder), Overlay(kind: .trash)]
+    let overlays = [Overlay(kind: .claude), Overlay(kind: .gpt), Overlay(kind: .finder), Overlay(kind: .trash), Overlay(kind: .ego), Overlay(kind: .chrome)]
     var phase: CGFloat = 0
     var timer: Timer?
     var link: CADisplayLink?
@@ -576,6 +653,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         schedule(fast: false)
         noteLayer.isHidden = true
+        refreshBrowsers()
+        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refreshBrowsers() }
         Host.shared.root.addSublayer(noteLayer)
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard AXIsProcessTrusted() else { return }
@@ -618,6 +697,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 if n != self.overlays[0].attention { log("attention=\(n)") }
                 self.overlays[0].attention = n
+            }
+        }
+    }
+
+    /// 瀏覽器：今天在前景的總時間（8 小時算滿）＋前五名網站，每分鐘讀一次
+    func refreshBrowsers() {
+        queue.async {
+            let stats = self.overlays.filter { $0.kind.isBrowser }.map { ($0, $0.kind.historyRoot.flatMap(browserToday)) }
+            DispatchQueue.main.async {
+                for (o, st) in stats {
+                    guard let st, st.total >= 1 else { o.usage = Usage(); o.top = []; continue }
+                    o.usage = Usage(short: Window(pct: min(st.total / 480, 1) * 100))
+                    o.label = st.total >= 60 ? String(format: "%.1fh", st.total / 60) : "\(Int(st.total))m"
+                    o.top = st.top
+                    o.total = st.total
+                }
             }
         }
     }
@@ -668,8 +763,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let m = NSEvent.mouseLocation
         let screenH = Host.shared.window.frame.height
         var hit: (String, CGRect)?
+        var browser: Overlay?
         if visible {
-            for name in notes.keys {
+            for o in overlays where o.kind.isBrowser && !o.top.isEmpty {
+                guard let item = o.item, let r = frame(of: item) else { continue }
+                let f = CGRect(x: r.minX, y: screenH - r.maxY, width: r.width, height: r.height)
+                if f.contains(m) { hit = (o.kind.rawValue, f); browser = o; break }
+            }
+            for name in notes.keys where hit == nil {
                 guard let item = titleItems["title:" + name], let r = frame(of: item) else { continue }
                 let f = CGRect(x: r.minX, y: screenH - r.maxY, width: r.width, height: r.height)
                 if f.contains(m) { hit = (name, f); break }
@@ -677,10 +778,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         CATransaction.begin(); CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
-        guard let (name, f) = hit, let n = notes[name] else { noteLayer.isHidden = true; shownNote = nil; return }
-        if shownNote != name + n.title + n.body {
-            shownNote = name + n.title + n.body
-            let img = renderNote(name, n)
+        guard let (name, f) = hit, browser != nil || notes[name] != nil else { noteLayer.isHidden = true; shownNote = nil; return }
+        let key = browser.map { "\(name)\($0.top)" } ?? notes[name].map { name + $0.title + $0.body } ?? ""
+        if shownNote != key {
+            shownNote = key
+            let img = browser.map { b in renderTop(b.total, b.top) } ?? renderNote(name, notes[name]!)
             let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(img.size.width * 2), pixelsHigh: Int(img.size.height * 2), bitsPerSample: 8, samplesPerPixel: 4,
                                        hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
             rep.size = img.size
@@ -743,6 +845,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 // MARK: - main
 
 let args = CommandLine.arguments
+// 驗證：DockUsage --top <ego|chrome> <out.png>
+if args.count >= 4, args[1] == "--top", let k = Kind(rawValue: args[2]), let root = k.historyRoot {
+    let st = browserToday(root)
+    print(st.map { "total \(Int($0.total))m, top \($0.top.map { "\($0.host) \(Int($0.minutes))m" })" } ?? "unreadable")
+    if let st { try! NSBitmapImageRep(data: renderTop(st.total, st.top).tiffRepresentation!)!.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: args[3])) }
+    exit(0)
+}
+
 // 離屏截圖驗證：DockUsage --note <out.png>
 if args.count >= 3, args[1] == "--note" {
     let img = renderNote("LINE", Note(title: "小明", body: "晚上要不要一起吃飯？我訂了七點的位子，在你公司附近那家拉麵店，記得帶傘喔今天會下雨"))

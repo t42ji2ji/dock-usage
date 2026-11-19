@@ -25,6 +25,10 @@ Numbers update whenever you use Claude Code or Codex. A limit that has passed it
 
 The Finder icon fills up as your disk does, with the percentage on top. The Trash fills up with how many things are in it, and is full at 30.
 
+### Time in your browser
+
+The ego lite and Chrome icons fill up with how long you have used them today, full at 8 hours. Rest the pointer on one to see your top five sites. It reads the time each page stayed in front from the browser's own history, and only counts today.
+
 ### Latest notification on hover
 
 Rest the pointer on an app in the Dock to see the last notification it showed you, such as a LINE message. It clears once you open that app. Only notifications that appeared on screen while Dock Usage was running are kept, and only in memory.
@@ -71,7 +75,7 @@ Codex writes your limits into its session logs under `~/.codex/sessions`. Dock U
 
 ## Privacy
 
-Dock Usage only reads those two local files, plus the notification list from cmux if you have it and the notification banners shown on screen. It never goes online and never touches your login tokens.
+Dock Usage only reads those two local files, plus the notification list from cmux if you have it the notification banners shown on screen, and today's visits from ego lite and Chrome history. It never goes online and never touches your login tokens.
 
 ## Limits
 
