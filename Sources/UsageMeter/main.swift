@@ -17,7 +17,8 @@ enum Kind: String {
     /// Finder／垃圾桶：顯示硬碟用量，畫得比 AI 用量淡
     var isDisk: Bool { self == .finder || self == .trash }
     var icon: NSImage? {
-        if self == .trash { return NSImage(named: NSImage.trashFullName) }
+        // Dock 自己畫的垃圾桶比系統圖示小一圈，優先用 Dock 的素材
+        if self == .trash { return NSImage(contentsOfFile: "/System/Library/CoreServices/Dock.app/Contents/Resources/s-trashfull-background@2x.png") ?? NSImage(named: NSImage.trashFullName) }
         return appPaths.first { FileManager.default.fileExists(atPath: $0) }.map { NSWorkspace.shared.icon(forFile: $0) }
     }
     var tint: NSColor {
@@ -129,6 +130,7 @@ func glyphImage(_ ch: Character, _ color: NSColor, _ font: NSFont, _ cell: CGFlo
 }
 
 var maskCache: [Kind: CGImage] = [:]
+var maskBox: [Kind: CGRect] = [:]   // 圖示實際形狀的外框（0...1，左下原點）
 /// 原 app 圖示的 alpha 轉成灰階遮罩（256px），裁切用
 func iconMask(_ kind: Kind) -> CGImage? {
     if let m = maskCache[kind] { return m }
@@ -141,7 +143,14 @@ func iconMask(_ kind: Kind) -> CGImage? {
     NSGraphicsContext.restoreGraphicsState()
     guard let src = rgba.bitmapData else { return nil }
     var gray = [UInt8](repeating: 0, count: n * n)
-    for i in 0..<(n * n) { gray[i] = src[(i / n) * rgba.bytesPerRow + (i % n) * 4 + 3] }
+    // 垃圾桶是半透明玻璃：alpha 放大 4 倍，桶身才會整片蓋滿
+    var minX = n, minY = n, maxX = 0, maxY = 0
+    for i in 0..<(n * n) {
+        let v = min(255, Int(src[(i / n) * rgba.bytesPerRow + (i % n) * 4 + 3]) * 4)
+        gray[i] = UInt8(v)
+        if v > 128 { minX = min(minX, i % n); maxX = max(maxX, i % n); minY = min(minY, i / n); maxY = max(maxY, i / n) }
+    }
+    if maxX > minX { maskBox[kind] = CGRect(x: CGFloat(minX) / CGFloat(n), y: 1 - CGFloat(maxY + 1) / CGFloat(n), width: CGFloat(maxX - minX + 1) / CGFloat(n), height: CGFloat(maxY - minY + 1) / CGFloat(n)) }
     guard let provider = CGDataProvider(data: Data(gray) as CFData),
           let img = CGImage(width: n, height: n, bitsPerComponent: 8, bitsPerPixel: 8, bytesPerRow: n, space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGBitmapInfo(rawValue: 0), provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent) else { return nil }
     maskCache[kind] = img
@@ -156,8 +165,10 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
 
         // macOS 圖示格線：824/1024 的圓角方塊置中
         let inset = s * 100 / 1024
-        let body = NSRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
+        var body = NSRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
         let shape = NSBezierPath(roundedRect: body, xRadius: body.width * 0.225, yRadius: body.width * 0.225)
+        // 不是圓角方塊的圖示（垃圾桶）：水位和字元格照它實際的外框
+        if kind == .trash, iconMask(kind) != nil, let b = maskBox[kind] { body = NSRect(x: b.minX * s, y: b.minY * s, width: b.width * s, height: b.height * s) }
 
         guard let short else { return true }
         let p = CGFloat(min(max(short, 0), 100)) / 100
