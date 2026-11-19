@@ -353,10 +353,10 @@ final class Host {
     }
 }
 
-/// cmux 裡有未讀通知的 Claude 分頁數：左上角紅點＋數字（右上角留給 macOS 自己的紅點）
-func drawAttention(_ count: Int, size s: CGFloat, phase: CGFloat) {
+/// cmux 裡有未讀通知的 Claude 分頁數：右上角紅點＋數字；app 自己有 macOS 紅點時讓到左上角
+func drawAttention(_ count: Int, size s: CGFloat, phase: CGFloat, left: Bool = false) {
     guard count > 0 else { return }
-    let r = s * 0.13, c = NSPoint(x: s * 0.16, y: s * 0.84)
+    let r = s * 0.13, c = NSPoint(x: left ? s * 0.16 : s * 0.84, y: s * 0.84)
     let pulse = 0.85 + 0.15 * sin(phase * 1.2)
     let dot = NSBezierPath(ovalIn: NSRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
     NSColor.white.withAlphaComponent(pulse).setFill(); dot.fill()
@@ -368,14 +368,14 @@ func drawAttention(_ count: Int, size s: CGFloat, phase: CGFloat) {
 }
 
 /// 內容固定用 80pt（Dock 放大上限）畫成點陣圖；Dock 放大縮小時只改 layer 的框、GPU 縮放，不重畫
-func renderImage(kind: Kind, level: Double?, tick: Double?, phase: CGFloat, attention: Int = 0) -> CGImage? {
+func renderImage(kind: Kind, level: Double?, tick: Double?, phase: CGFloat, attention: Int = 0, badgeLeft: Bool = false) -> CGImage? {
     let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 160, pixelsHigh: 160, bitsPerSample: 8, samplesPerPixel: 4,
                                hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
     rep.size = NSSize(width: 80, height: 80)
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
     if level != nil { renderIcon(kind: kind, base: nil, short: level, long: tick, phase: phase, size: 80).draw(in: NSRect(x: 0, y: 0, width: 80, height: 80)) }
-    drawAttention(attention, size: 80, phase: phase)
+    drawAttention(attention, size: 80, phase: phase, left: badgeLeft)
     NSGraphicsContext.restoreGraphicsState()
     return rep.cgImage
 }
@@ -391,7 +391,9 @@ final class Overlay {
     static let lead = CGFloat(Double(ProcessInfo.processInfo.environment["DOCKUSAGE_LEAD"] ?? "") ?? 0.5)
     var lastLevel = 0.0
     var attention = 0
+    var nativeBadge = false   // Dock 上這個 app 自己有紅點
     var lastAttention = 0
+    var lastBadge = false
 
     init(kind: Kind) {
         self.kind = kind
@@ -424,9 +426,9 @@ final class Overlay {
         shown += (to - shown) * (1 - pow(0.88, dt * 30))
         if abs(to - shown) < 0.05 { shown = to }
         let t = Int(phase * 12)                          // 約 38 次/秒重畫，波浪才順；字元仍約 13 次/秒換
-        if t != lastTick || abs(shown - lastLevel) > 0.01 || attention != lastAttention {
-            lastTick = t; lastLevel = shown; lastAttention = attention
-            layer.contents = renderImage(kind: kind, level: primary == nil ? nil : shown, tick: usage.short == nil ? nil : usage.long?.pct, phase: phase, attention: attention)
+        if t != lastTick || abs(shown - lastLevel) > 0.01 || attention != lastAttention || nativeBadge != lastBadge {
+            lastTick = t; lastLevel = shown; lastAttention = attention; lastBadge = nativeBadge
+            layer.contents = renderImage(kind: kind, level: primary == nil ? nil : shown, tick: usage.short == nil ? nil : usage.long?.pct, phase: phase, attention: attention, badgeLeft: nativeBadge)
         }
         // 圖示在 Dock 項目框裡置中，邊長＝框的短邊減 2pt（tilesize 37 時框高 39；2026-11-19 校準截圖量過）
         // AX 座標左上為原點；host 視窗蓋住主螢幕，layer 座標左下為原點
@@ -562,6 +564,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let items = dockItems()
             for o in overlays {
                 o.item = o.kind.appPaths.lazy.compactMap { items[$0] }.first
+                o.nativeBadge = o.item.flatMap { ax($0, "AXStatusLabel") as? String }.map { !$0.isEmpty } ?? false
             }
         }
         // 收起時只讀一個圖示的位置，還在螢幕外就不做別的

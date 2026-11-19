@@ -23,7 +23,7 @@
 
 ### 在 cmux 裡跑 Claude Code 時的紅點
 
-在 [cmux](https://cmux.com) 裡跑 Claude Code 的話，Claude 圖示左上角會出現紅點和數字，代表 cmux 裡有幾個分頁亮著通知：回合做完、要權限、或在等你輸入。點進那些分頁就會消失，不用設定。
+在 [cmux](https://cmux.com) 裡跑 Claude Code 的話，Claude 圖示右上角會出現紅點和數字（Claude 自己有紅點時改到左上角），代表 cmux 裡有幾個分頁亮著通知：回合做完、要權限、或在等你輸入。點進那些分頁就會消失，不用設定。
 
 ## 安裝
 

@@ -23,7 +23,7 @@ Numbers update whenever you use Claude Code or Codex. A limit that has passed it
 
 ### Red dot for Claude Code sessions in cmux
 
-If you run Claude Code in [cmux](https://cmux.com), a red dot with a count appears at the top left of the Claude icon. It counts the tabs that show a notification in cmux: a session finished its turn, asks for permission, or waits for your input. It goes away once you open those tabs. Nothing to set up.
+If you run Claude Code in [cmux](https://cmux.com), a red dot with a count appears at the top right of the Claude icon (top left if Claude shows its own badge). It counts the tabs that show a notification in cmux: a session finished its turn, asks for permission, or waits for your input. It goes away once you open those tabs. Nothing to set up.
 
 ## Install
 
