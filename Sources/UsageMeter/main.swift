@@ -1017,6 +1017,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 // MARK: - main
 
 let args = CommandLine.arguments
+// 影片素材：DockUsage --frames <kind> <style> <起始%> <結束%> <張數> <輸出資料夾> [size] [--bare] [--attn N] [--label 文字]
+// 每張 phase 照 30fps 前進，水位從起始緩動到結束；透明 PNG，檔名 0000.png 起
+if args.count >= 8, args[1] == "--frames", let k = Kind(rawValue: args[2]), let st = MaskStyle(rawValue: args[3]),
+   let a = Double(args[4]), let b = Double(args[5]), let n = Int(args[6]) {
+    let dir = args[7]
+    let size = args.count > 8 ? CGFloat(Double(args[8]) ?? 512) : 512
+    let bare = args.contains("--bare")
+    let attn = args.firstIndex(of: "--attn").flatMap { Int(args[$0 + 1]) } ?? 0
+    let label = args.firstIndex(of: "--label").map { args[$0 + 1] }
+    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    for i in 0..<n {
+        let t = n > 1 ? Double(i) / Double(n - 1) : 1
+        let e = t < 0.5 ? 4 * t * t * t : 1 - pow(-2 * t + 2, 3) / 2          // ease-in-out
+        let level = a + (b - a) * e
+        let phase = CGFloat(i) / 30 * 3.2
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size), pixelsHigh: Int(size), bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        let r = NSRect(x: 0, y: 0, width: size, height: size)
+        if !bare { k.icon?.draw(in: r) }
+        renderIcon(kind: k, base: nil, short: level, long: nil, phase: phase, size: size, label: label, style: st).draw(in: r)
+        drawAttention(attn, size: size, phase: phase)
+        NSGraphicsContext.restoreGraphicsState()
+        try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: dir + String(format: "/%04d.png", i)))
+    }
+    exit(0)
+}
+
+// 影片／官網用的假資料卡片：DockUsage --fake-top <out.png> ／ --fake-note <out.png>
+if args.count >= 3, args[1] == "--fake-top" {
+    let top = [("youtube.com", 64.0), ("github.com", 48.0), ("figma.com", 31.0), ("notion.so", 18.0), ("mail.google.com", 9.0)].map { SiteTime(host: $0.0, minutes: $0.1) }
+    let img = renderTop(170, top)
+    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(img.size.width * 2), pixelsHigh: Int(img.size.height * 2), bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+    rep.size = img.size
+    NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+    img.draw(in: NSRect(origin: .zero, size: img.size)); NSGraphicsContext.restoreGraphicsState()
+    try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: args[2]))
+    exit(0)
+}
+if args.count >= 3, args[1] == "--fake-note" {
+    let img = renderNote("LINE", Note(title: "Mia", body: "Dinner at 7? I booked the ramen place near your office."))
+    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(img.size.width * 2), pixelsHigh: Int(img.size.height * 2), bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+    rep.size = img.size
+    NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+    img.draw(in: NSRect(origin: .zero, size: img.size)); NSGraphicsContext.restoreGraphicsState()
+    try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: args[2]))
+    exit(0)
+}
+
 // 驗證：DockUsage --top <ego|chrome> <out.png>
 if args.count >= 4, args[1] == "--top", let k = Kind(rawValue: args[2]), let root = k.historyRoot {
     let st = browserToday(root)
