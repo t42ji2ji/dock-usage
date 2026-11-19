@@ -179,9 +179,6 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
         let str = NSMutableAttributedString(string: num, attributes: [.font: font, .foregroundColor: NSColor.white, .shadow: shadow])
         str.append(NSAttributedString(string: "%", attributes: [.font: NSFont.monospacedSystemFont(ofSize: s * 0.12, weight: .bold), .foregroundColor: NSColor.white.withAlphaComponent(0.85), .shadow: shadow]))
         let sz = str.size()
-        let plate = NSRect(x: body.midX - sz.width / 2 - s * 0.03, y: body.midY - sz.height / 2, width: sz.width + s * 0.06, height: sz.height)
-        NSColor.black.withAlphaComponent(0.55).setFill()
-        NSBezierPath(roundedRect: plate, xRadius: s * 0.03, yRadius: s * 0.03).fill()
         str.draw(at: NSPoint(x: body.midX - sz.width / 2, y: body.midY - sz.height / 2))
         return true
     }
