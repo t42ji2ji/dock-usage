@@ -118,7 +118,7 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
         shape.addClip()
 
         // 整個圖示壓暗
-        NSColor.black.withAlphaComponent(0.72).setFill()
+        NSColor.black.withAlphaComponent(0.35).setFill()
         body.fill()
 
         // ASCII 格子：用掉的部分由密字元填滿、隨機跳字＋白色閃光；水面那排淡字元翻騰；空的部分只留淡點
@@ -142,17 +142,17 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
                 var ch: Character, col: NSColor
                 if rect.maxY <= level {
                     if rnd(c, r, tick &* 3 &+ 1) < 0.05 {
-                        ch = "*"; col = .white
+                        ch = "*"; col = NSColor.white.withAlphaComponent(0.7)
                     } else {
                         ch = dense[Int(x * CGFloat(dense.count)) % dense.count]
-                        col = color.blended(withFraction: 0.25 * rnd(c, r, k), of: .white)!.withAlphaComponent(0.75 + 0.25 * rnd(c, r, k + 9))
+                        col = color.blended(withFraction: 0.25 * rnd(c, r, k), of: .white)!.withAlphaComponent(0.45 + 0.2 * rnd(c, r, k + 9))
                     }
                 } else if rect.minY < level {
                     ch = surf[Int(x * CGFloat(surf.count)) % surf.count]
-                    col = color.withAlphaComponent(0.45 + 0.5 * rnd(c, r, tick))
+                    col = color.withAlphaComponent(0.3 + 0.3 * rnd(c, r, tick))
                 } else {
                     ch = dim[Int(x * CGFloat(dim.count)) % dim.count]
-                    col = NSColor.white.withAlphaComponent(0.14 + 0.12 * rnd(c, r, k))
+                    col = NSColor.white.withAlphaComponent(0.10 + 0.08 * rnd(c, r, k))
                 }
                 let str = NSAttributedString(string: String(ch), attributes: [.font: glyph, .foregroundColor: col])
                 let sz = str.size()
