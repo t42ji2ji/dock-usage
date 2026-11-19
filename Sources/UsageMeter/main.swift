@@ -119,6 +119,27 @@ func glyphImage(_ ch: Character, _ color: NSColor, _ font: NSFont, _ cell: CGFlo
     return img
 }
 
+var maskCache: [Kind: CGImage] = [:]
+/// 原 app 圖示的 alpha 轉成灰階遮罩（256px），裁切用
+func iconMask(_ kind: Kind) -> CGImage? {
+    if let m = maskCache[kind] { return m }
+    guard let path = kind.appPaths.first(where: { FileManager.default.fileExists(atPath: $0) }) else { return nil }
+    let icon = NSWorkspace.shared.icon(forFile: path)
+    let n = 256
+    let rgba = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: n, pixelsHigh: n, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rgba)
+    icon.draw(in: NSRect(x: 0, y: 0, width: n, height: n))
+    NSGraphicsContext.restoreGraphicsState()
+    guard let src = rgba.bitmapData else { return nil }
+    var gray = [UInt8](repeating: 0, count: n * n)
+    for i in 0..<(n * n) { gray[i] = src[(i / n) * rgba.bytesPerRow + (i % n) * 4 + 3] }
+    guard let provider = CGDataProvider(data: Data(gray) as CFData),
+          let img = CGImage(width: n, height: n, bitsPerComponent: 8, bitsPerPixel: 8, bytesPerRow: n, space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGBitmapInfo(rawValue: 0), provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent) else { return nil }
+    maskCache[kind] = img
+    return img
+}
+
 /// 原 app 圖示壓暗 + ASCII 字元格水位（5 小時）+ 兩側刻度（7 天）+ 百分比數字
 func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase: CGFloat, size: CGFloat = 512, showNumber: Bool = true) -> NSImage {
     NSImage(size: NSSize(width: size, height: size), flipped: false) { _ in
@@ -136,7 +157,13 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
         let color = hot ? NSColor(srgbRed: 0.90, green: 0.28, blue: 0.30, alpha: 1) : kind.tint
 
         NSGraphicsContext.saveGraphicsState()
-        shape.addClip()
+        if let mask = iconMask(kind), let cg = NSGraphicsContext.current?.cgContext {
+            // 用真實圖示的輪廓裁切（連續圓角），放大 3% 蓋住邊緣反光與半像素誤差
+            let m = s * 0.015
+            cg.clip(to: CGRect(x: -m, y: -m, width: s + m * 2, height: s + m * 2), mask: mask)
+        } else {
+            shape.addClip()
+        }
 
         // 只有用掉的部分（水位以下）壓暗＋染色，上面維持原圖示：多少 % 就滿到多少
         let filled = NSRect(x: body.minX, y: body.minY, width: body.width, height: body.height * p)
