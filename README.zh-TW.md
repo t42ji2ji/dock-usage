@@ -14,7 +14,7 @@
 
 ## 顯示什麼
 
-**5 小時額度**用掉多少，圖示就從下往上鋪滿多少閃爍的 ASCII 字元，中間的數字是百分比。左右兩側的小刻度是**每週額度**。超過 80% 字元轉紅。
+**5 小時額度**用掉多少，圖示就從下往上鋪滿多少，中間的數字是百分比。左右兩側的小刻度是**每週額度**。超過 80% 轉紅。樣子有四種可選：閃爍的 ASCII 字元、液體、網點、沿著邊緣的外環。
 
 - **Claude**：Claude 方案的額度，從 Claude Code 讀。
 - **ChatGPT**：ChatGPT 方案裡 Codex 的額度，從 Codex 讀。
@@ -27,7 +27,7 @@ Finder 圖示照硬碟用了多少鋪滿，中間寫百分比。垃圾桶照裡�
 
 ### 今天在瀏覽器待了多久
 
-ego lite 和 Chrome 的圖示照今天用了多久鋪滿，8 小時算滿。滑鼠停上去會列出前五個最常待的網站。時間來自瀏覽器自己的瀏覽紀錄裡每個頁面在前景停了多久，只算今天。
+Chrome、Arc、Edge、Brave、ego lite 的圖示照今天用了多久鋪滿，8 小時算滿。滑鼠停上去會列出前五個最常待的網站。時間來自瀏覽器自己的瀏覽紀錄裡每個頁面在前景停了多久，只算今天。
 
 ### 滑過 Dock 看最新通知
 
@@ -40,34 +40,25 @@ ego lite 和 Chrome 的圖示照今天用了多久鋪滿，8 小時算滿。滑�
 ## 安裝
 
 1. 下載 [DockUsage.dmg](https://github.com/t42ji2ji/dock-usage/releases/latest/download/DockUsage.dmg)，把 Dock Usage 拖進「應用程式」。
-2. 打開它，到 **系統設定 › 隱私權與安全性 › 輔助使用** 允許 Dock Usage。它要靠這個找到圖示在 Dock 裡的位置。允許後如果沒出現，結束它再打開一次。
-3. 讓 Claude 和 ChatGPT 留在 Dock 上（開著或釘選都可以）。
+2. 打開它。歡迎畫面會帶你允許**輔助使用**（用來找到圖示在 Dock 的位置）、選要顯示什麼、選一種樣子。允許之後它會自己重開。
+3. 讓想看的 app 留在 Dock 上（開著或釘選都可以）。
 
-Dock Usage 沒有視窗，也沒有自己的 Dock 圖示，登入時自動開啟。要結束或關掉登入時開啟，從「應用程式」再打開它一次。
+Dock Usage 沒有自己的 Dock 圖示，登入時自動開啟。要改顯示內容、換樣子或結束，從「應用程式」再打開它一次。瀏覽器時間和通知會讀到私人內容，所以預設關閉，要自己打開。
 
 需要 macOS 14 以上、Apple Silicon。
 
-### Claude：狀態列加幾行
+### Claude：接上 Claude Code
 
-Claude Code 會把方案額度傳給它的[狀態列](https://code.claude.com/docs/en/statusline)指令。Dock Usage 從 `~/.claude/dock-usage/claude.json` 讀，所以要讓狀態列把額度存到那裡。
+Claude Code 會把方案額度傳給它的[狀態列](https://code.claude.com/docs/en/statusline)指令，Dock Usage 從 `~/.claude/dock-usage/claude.json` 讀。
 
-已經有狀態列腳本的話，在它把輸入讀進 `$input` 之後加上：
+還沒有狀態列的話，歡迎畫面會幫你設好。已經有自己的狀態列，就在腳本把輸入讀進 `$input` 之後加上：
 
 ```sh
-rl=$(echo "$input" | jq -c '.rate_limits // empty' 2>/dev/null)
-if [ -n "$rl" ]; then
-  mkdir -p "$HOME/.claude/dock-usage"
-  echo "$rl" > "$HOME/.claude/dock-usage/claude.json.$$" && mv -f "$HOME/.claude/dock-usage/claude.json.$$" "$HOME/.claude/dock-usage/claude.json"
-fi
+mkdir -p "$HOME/.claude/dock-usage"
+printf '%s' "$input" > "$HOME/.claude/dock-usage/claude.json.$$" && mv -f "$HOME/.claude/dock-usage/claude.json.$$" "$HOME/.claude/dock-usage/claude.json"
 ```
 
-還沒有的話，把上面幾行存成 `~/.claude/dock-usage.sh`，第一行加上 `input=$(cat)`，再在 `~/.claude/settings.json` 加：
-
-```json
-"statusLine": { "type": "command", "command": "sh ~/.claude/dock-usage.sh" }
-```
-
-需要 `jq`（`brew install jq`）和 Claude Pro 或 Max 方案。
+需要 Claude Pro 或 Max 方案。
 
 ### ChatGPT：不用設定
 

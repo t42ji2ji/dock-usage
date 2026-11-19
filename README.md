@@ -14,7 +14,7 @@ Your Claude and ChatGPT usage, drawn right on their Dock icons.
 
 ## What it shows
 
-A grid of flickering ASCII characters fills each icon from the bottom as you use up your **5-hour limit**. The number in the middle is the percentage. Two small ticks on the sides mark your **weekly limit**. Past 80% the characters turn red.
+Each icon fills from the bottom as you use up your **5-hour limit**. The number in the middle is the percentage. Two small ticks on the sides mark your **weekly limit**. Past 80% it turns red. Pick one of four looks: flickering ASCII characters, liquid, dots, or a ring around the edge.
 
 - **Claude** shows your Claude plan limits, read from Claude Code.
 - **ChatGPT** shows your Codex limits on your ChatGPT plan, read from Codex.
@@ -27,7 +27,7 @@ The Finder icon fills up as your disk does, with the percentage on top. The Tras
 
 ### Time in your browser
 
-The ego lite and Chrome icons fill up with how long you have used them today, full at 8 hours. Rest the pointer on one to see your top five sites. It reads the time each page stayed in front from the browser's own history, and only counts today.
+Chrome, Arc, Edge, Brave and ego lite icons fill up with how long you have used them today, full at 8 hours. Rest the pointer on one to see your top five sites. It reads the time each page stayed in front from the browser's own history, and only counts today.
 
 ### Latest notification on hover
 
@@ -40,34 +40,25 @@ If you run Claude Code in [cmux](https://cmux.com), a red dot with a count appea
 ## Install
 
 1. Download [DockUsage.dmg](https://github.com/t42ji2ji/dock-usage/releases/latest/download/DockUsage.dmg) and drag Dock Usage into Applications.
-2. Open it and allow it in **System Settings › Privacy & Security › Accessibility**. It needs this to find where the icons sit in your Dock. If nothing shows up right after allowing, quit and open it again.
-3. Keep the Claude and ChatGPT apps in your Dock (running or pinned).
+2. Open it. A short welcome walks you through allowing **Accessibility** (to find where icons sit in your Dock), picking what to show, and choosing a look. It restarts by itself once you allow access.
+3. Keep the apps you want to see in your Dock (running or pinned).
 
-Dock Usage has no window and no Dock icon of its own. It starts at login. Open it again from Applications to quit it or to turn off opening at login.
+Dock Usage has no Dock icon of its own and starts at login. Open it again from Applications to change what it shows, switch looks, or quit. Browser time and notifications read private data, so they stay off until you turn them on.
 
 Requires macOS 14 or later on Apple Silicon.
 
-### Claude: one line in your status line
+### Claude: connect Claude Code
 
-Claude Code passes your plan limits to its [status line](https://code.claude.com/docs/en/statusline) command. Dock Usage reads them from `~/.claude/dock-usage/claude.json`, so the status line needs to save them there.
+Claude Code passes your plan limits to its [status line](https://code.claude.com/docs/en/statusline) command. Dock Usage reads them from `~/.claude/dock-usage/claude.json`.
 
-If you already have a status line script, add this right after it reads its input into `$input`:
+If you don't have a status line yet, the welcome screen sets one up for you. If you already have one, add these lines right after your script reads its input into `$input`:
 
 ```sh
-rl=$(echo "$input" | jq -c '.rate_limits // empty' 2>/dev/null)
-if [ -n "$rl" ]; then
-  mkdir -p "$HOME/.claude/dock-usage"
-  echo "$rl" > "$HOME/.claude/dock-usage/claude.json.$$" && mv -f "$HOME/.claude/dock-usage/claude.json.$$" "$HOME/.claude/dock-usage/claude.json"
-fi
+mkdir -p "$HOME/.claude/dock-usage"
+printf '%s' "$input" > "$HOME/.claude/dock-usage/claude.json.$$" && mv -f "$HOME/.claude/dock-usage/claude.json.$$" "$HOME/.claude/dock-usage/claude.json"
 ```
 
-If you don't have one, save the lines above in `~/.claude/dock-usage.sh` with `input=$(cat)` as the first line, and add this to `~/.claude/settings.json`:
-
-```json
-"statusLine": { "type": "command", "command": "sh ~/.claude/dock-usage.sh" }
-```
-
-Requires `jq` (`brew install jq`) and a Claude Pro or Max plan.
+Requires a Claude Pro or Max plan.
 
 ### ChatGPT: nothing to set up
 
