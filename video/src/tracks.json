@@ -1,0 +1,33 @@
+{
+  "fps": 30,
+  "total": 1140,
+  "tracks": [
+    { "name": "claude", "kind": "claude", "style": "ascii", "size": 768, "start": 130, "segments": [
+      { "from": 0, "to": 57, "n": 90 },
+      { "from": 57, "to": 57, "n": 70 },
+      { "from": 57, "to": 86, "n": 60 },
+      { "from": 86, "to": 86, "n": 38 },
+      { "from": 86, "to": 86, "n": 422, "attn": 2 }
+    ]},
+    { "name": "gpt", "kind": "gpt", "style": "ascii", "size": 768, "start": 250, "segments": [
+      { "from": 0, "to": 38, "n": 75 },
+      { "from": 38, "to": 38, "n": 485 }
+    ]},
+    { "name": "finder", "kind": "finder", "style": "ascii", "size": 512, "start": 460, "segments": [
+      { "from": 0, "to": 73, "n": 70 },
+      { "from": 73, "to": 73, "n": 280 }
+    ]},
+    { "name": "trash", "kind": "trash", "style": "ascii", "size": 512, "start": 528, "segments": [
+      { "from": 0, "to": 60, "n": 60 },
+      { "from": 60, "to": 60, "n": 222 }
+    ]},
+    { "name": "chrome", "kind": "chrome", "style": "ascii", "size": 512, "start": 600, "label": "2.8h", "segments": [
+      { "from": 0, "to": 35, "n": 80 },
+      { "from": 35, "to": 35, "n": 130 }
+    ]},
+    { "name": "style-ascii", "kind": "claude", "style": "ascii", "size": 640, "start": 802, "segments": [{ "from": 64, "to": 64, "n": 140 }]},
+    { "name": "style-liquid", "kind": "claude", "style": "liquid", "size": 640, "start": 802, "segments": [{ "from": 64, "to": 64, "n": 140 }]},
+    { "name": "style-dots", "kind": "claude", "style": "dots", "size": 640, "start": 802, "segments": [{ "from": 64, "to": 64, "n": 140 }]},
+    { "name": "style-ring", "kind": "claude", "style": "ring", "size": 640, "start": 802, "segments": [{ "from": 64, "to": 64, "n": 140 }]}
+  ]
+}

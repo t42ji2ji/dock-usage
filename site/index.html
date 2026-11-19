@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dock Usage — your Dock, alive</title>
+<meta name="description" content="Claude and ChatGPT usage, disk, Trash, browser time and notifications, drawn right on your Dock icons. Free and open source for macOS.">
+<meta name="theme-color" content="#000000">
+<link rel="canonical" href="https://dockusage.dorara.app/">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="favicon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Dock Usage">
+<meta property="og:url" content="https://dockusage.dorara.app/">
+<meta property="og:title" content="Dock Usage — your Dock, alive">
+<meta property="og:description" content="Claude and ChatGPT usage, disk, Trash, browser time and notifications, drawn right on your Dock icons.">
+<meta property="og:image" content="https://dockusage.dorara.app/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://dockusage.dorara.app/og-image.png">
+<script>
+  (function () {
+    var lang = null;
+    try { lang = localStorage.getItem("dock-usage-lang"); } catch (e) {}
+    if (lang !== "en" && lang !== "zh") lang = /^zh/i.test(navigator.language || "") ? "zh" : "en";
+    document.documentElement.setAttribute("data-lang", lang);
+    document.documentElement.lang = lang === "zh" ? "zh-Hant-TW" : "en";
+  })();
+</script>
+<link rel="stylesheet" href="style.css?v=3">
+</head>
+<body>
+
+<header class="top">
+  <span class="wordmark"><img src="favicon-192.png" width="22" height="22" alt="">Dock Usage</span>
+  <div class="lang" role="group" aria-label="Language / 語言">
+    <button type="button" data-set-lang="en">EN</button>
+    <button type="button" data-set-lang="zh">中文</button>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <h1><span class="en">Your Dock, alive.</span><span class="zh">讓 Dock 活起來。</span></h1>
+    <ul class="keys">
+      <li><span class="en">Free &amp; open source</span><span class="zh">免費開源</span></li>
+      <li><span class="en">Local only</span><span class="zh">只在本機</span></li>
+      <li><span class="en">No window, just the Dock</span><span class="zh">沒有視窗，只有 Dock</span></li>
+    </ul>
+    <div class="actions">
+      <a class="btn" href="https://github.com/t42ji2ji/dock-usage/releases/latest/download/DockUsage.dmg"><span class="en">Download for Mac</span><span class="zh">下載 Mac 版</span></a>
+      <a class="btn ghost" href="https://github.com/t42ji2ji/dock-usage">GitHub</a>
+    </div>
+    <p class="fine"><span class="en">macOS 14+ · Apple Silicon</span><span class="zh">macOS 14 以上 · Apple Silicon</span></p>
+
+    <div class="stage">
+      <div class="dock" aria-label="Dock with live icons">
+        <img src="assets/finder.webp" width="256" height="256" alt="Finder icon, disk 64% full">
+        <img src="assets/chrome.webp" width="256" height="256" alt="Chrome icon, 2.8 hours today">
+        <img src="assets/claude.webp" width="256" height="256" alt="Claude icon, 57% used, 2 sessions waiting">
+        <img src="assets/gpt.webp" width="256" height="256" alt="ChatGPT icon, 38% used">
+        <i class="sep"></i>
+        <img src="assets/trash.webp" width="256" height="256" alt="Trash icon, partly full">
+      </div>
+      <video autoplay muted loop playsinline poster="assets/intro-poster.jpg" src="assets/intro.mp4"></video>
+    </div>
+  </section>
+
+  <section class="feat">
+    <div class="art pair">
+      <img src="assets/claude-red.webp" width="256" height="256" alt="Claude icon at 86%, turned red">
+      <img src="assets/gpt.webp" width="256" height="256" alt="ChatGPT icon at 38%">
+    </div>
+    <div class="txt">
+      <h2><span class="en">Claude and ChatGPT limits</span><span class="zh">Claude 和 ChatGPT 額度</span></h2>
+      <p><span class="en">The icon fills as you use your 5-hour limit. Side ticks mark the week. Red past 80%.</span><span class="zh">5 小時額度用多少，圖示就鋪滿多少。兩側刻度是每週額度。超過 80% 轉紅。</span></p>
+    </div>
+  </section>
+
+  <section class="feat flip">
+    <div class="art"><img class="one" src="assets/claude.webp" width="256" height="256" alt="Claude icon with a red dot showing 2"></div>
+    <div class="txt">
+      <h2><span class="en">Sessions waiting for you</span><span class="zh">有 session 在等你</span></h2>
+      <p><span class="en">Running Claude Code in cmux? A red dot counts the tabs that finished, need permission or wait for input.</span><span class="zh">在 cmux 跑 Claude Code 時，紅點數字是做完、要權限或在等你輸入的分頁數。</span></p>
+    </div>
+  </section>
+
+  <section class="feat">
+    <div class="art pair">
+      <img src="assets/finder.webp" width="256" height="256" alt="Finder icon, disk 64% full">
+      <img src="assets/trash.webp" width="256" height="256" alt="Trash icon, partly full">
+    </div>
+    <div class="txt">
+      <h2><span class="en">Disk and Trash</span><span class="zh">硬碟和垃圾桶</span></h2>
+      <p><span class="en">Finder fills with your disk. The Trash fills with what's in it, full at 30 items.</span><span class="zh">Finder 照硬碟用量鋪滿；垃圾桶照裡面的東西鋪滿，30 樣算滿。</span></p>
+    </div>
+  </section>
+
+  <section class="feat flip">
+    <div class="art hover">
+      <img class="card" src="assets/top-sites.png" width="248" height="182" alt="Today's top five sites">
+      <img class="one" src="assets/chrome.webp" width="256" height="256" alt="Chrome icon, 2.8 hours today">
+    </div>
+    <div class="txt">
+      <h2><span class="en">Time in your browser</span><span class="zh">今天在瀏覽器待多久</span></h2>
+      <p><span class="en">Chrome, Arc, Edge, Brave and ego lite fill up with today's time, full at 8 hours. Hover for your top five sites.</span><span class="zh">Chrome、Arc、Edge、Brave、ego lite 照今天用了多久鋪滿，8 小時算滿。滑鼠停上去看前五名網站。</span></p>
+    </div>
+  </section>
+
+  <section class="feat">
+    <div class="art hover">
+      <img class="card note" src="assets/note.png" width="260" height="65" alt="A message notification">
+      <span class="slot"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3v16l4.2-4 2.8 6.5 2.6-1.1-2.8-6.4H18z"/></svg></span>
+    </div>
+    <div class="txt">
+      <h2><span class="en">Latest notification on hover</span><span class="zh">滑過就看最新通知</span></h2>
+      <p><span class="en">Rest the pointer on an app to see the last thing it told you. Gone once you open it.</span><span class="zh">滑鼠停在 app 上，看它最後跳出的通知。打開那個 app 就清掉。</span></p>
+    </div>
+  </section>
+
+  <section class="looks">
+    <h2><span class="en">Four looks</span><span class="zh">四種樣子</span></h2>
+    <ul>
+      <li><img src="assets/look-ascii.webp" width="256" height="256" alt="">ASCII</li>
+      <li><img src="assets/look-liquid.webp" width="256" height="256" alt=""><span class="en">Liquid</span><span class="zh">液體</span></li>
+      <li><img src="assets/look-dots.webp" width="256" height="256" alt=""><span class="en">LED</span><span class="zh">LED 點陣</span></li>
+      <li><img src="assets/look-ring.webp" width="256" height="256" alt=""><span class="en">Glow</span><span class="zh">光邊</span></li>
+    </ul>
+  </section>
+
+  <section class="privacy">
+    <h2><span class="en">Never goes online.</span><span class="zh">不連網。</span></h2>
+    <p><span class="en">It reads the limit files Claude Code and Codex already write, cmux's notification list, banners shown on screen and today's browser history. Nothing leaves your Mac, and it never touches your login tokens.</span><span class="zh">只讀 Claude Code 和 Codex 本來就寫在本機的額度檔、cmux 的通知清單、畫面上跳出的通知，和今天的瀏覽紀錄。資料不離開你的 Mac，也不碰登入憑證。</span></p>
+    <a class="btn" href="https://github.com/t42ji2ji/dock-usage/releases/latest/download/DockUsage.dmg"><span class="en">Download for Mac</span><span class="zh">下載 Mac 版</span></a>
+  </section>
+</main>
+
+<footer>
+  <p><a href="https://github.com/t42ji2ji/dock-usage">GitHub</a> · GPL-3.0 · <a href="https://dorara.app">dorara.app</a></p>
+  <p><span class="en">Claude and ChatGPT are trademarks of Anthropic and OpenAI. Dock Usage is not affiliated with either.</span><span class="zh">Claude 和 ChatGPT 是 Anthropic 和 OpenAI 的商標，Dock Usage 與兩家公司無關。</span></p>
+</footer>
+
+<script src="main.js?v=2"></script>
+</body>
+</html>
