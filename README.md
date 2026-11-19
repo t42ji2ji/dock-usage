@@ -23,7 +23,7 @@ Numbers update whenever you use Claude Code or Codex. A limit that has passed it
 
 ### Disk space on Finder and the Trash
 
-The Finder icon fills up as your disk does. When the disk is 85% full, the Trash fills too, as a reminder that emptying it frees space.
+The Finder icon fills up as your disk does, with the percentage on top. When the disk is 85% full, the Trash fills too, without a number, as a reminder that emptying it frees space.
 
 ### Latest notification on hover
 

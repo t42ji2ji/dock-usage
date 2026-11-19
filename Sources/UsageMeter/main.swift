@@ -285,7 +285,7 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
         }
         NSGraphicsContext.restoreGraphicsState()
 
-        guard showNumber else { return true }
+        guard showNumber, kind != .trash else { return true }   // 垃圾桶只用水位提醒硬碟快滿，不寫數字
         // 數字（等寬）
         let num = label ?? "\(Int(short.rounded()))"
         let shadow = NSShadow()
