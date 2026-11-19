@@ -60,9 +60,9 @@ func window(_ v: Any?, pctKey: String) -> Window? {
 
 let home = FileManager.default.homeDirectoryForCurrentUser
 
-/// Claude：Claude Code 狀態列腳本寫出的 rate_limits（~/.claude/usage-meter/claude.json）
+/// Claude：Claude Code 狀態列腳本寫出的 rate_limits（~/.claude/dock-usage/claude.json）
 func loadClaude() -> Usage {
-    let url = home.appendingPathComponent(".claude/usage-meter/claude.json")
+    let url = home.appendingPathComponent(".claude/dock-usage/claude.json")
     guard let data = try? Data(contentsOf: url),
           let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return Usage() }
     let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
@@ -98,8 +98,29 @@ func loadCodex() -> Usage {
 
 // MARK: - Icon render
 
+/// 字元排版很貴（每格 2ms）：同字元、同顏色、同尺寸只排一次，存成點陣圖再貼
+var glyphCache: [String: CGImage] = [:]
+func glyphImage(_ ch: Character, _ color: NSColor, _ font: NSFont, _ cell: CGFloat, _ key: String) -> CGImage {
+    let k = "\(ch)|\(key)|\(Int(cell * 100))"
+    if let img = glyphCache[k] { return img }
+    let px = max(Int((cell * 2).rounded(.up)), 1)
+    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px, bitsPerSample: 8, samplesPerPixel: 4,
+                               hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+    rep.size = NSSize(width: cell, height: cell)
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+    let str = NSAttributedString(string: String(ch), attributes: [.font: font, .foregroundColor: color])
+    let sz = str.size()
+    str.draw(at: NSPoint(x: cell / 2 - sz.width / 2, y: cell / 2 - sz.height / 2))
+    NSGraphicsContext.restoreGraphicsState()
+    let img = rep.cgImage!
+    if glyphCache.count > 4000 { glyphCache.removeAll() }
+    glyphCache[k] = img
+    return img
+}
+
 /// 原 app 圖示壓暗 + ASCII 字元格水位（5 小時）+ 兩側刻度（7 天）+ 百分比數字
-func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase: CGFloat, size: CGFloat = 512) -> NSImage {
+func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase: CGFloat, size: CGFloat = 512, showNumber: Bool = true) -> NSImage {
     NSImage(size: NSSize(width: size, height: size), flipped: false) { _ in
         let s = size
         base?.draw(in: NSRect(x: 0, y: 0, width: s, height: s))
@@ -133,32 +154,37 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
             h ^= h >> 33; h = h &* 0xff51afd7ed558ccd; h ^= h >> 33
             return CGFloat(h % 10000) / 10000
         }
+        let cg = NSGraphicsContext.current!.cgContext
+        cg.saveGState()
         let dense = Array("@#%&*+=$"), surf = Array(".:-=~"), dim = Array(".:-+=")
         for r in 0..<cols {
             for c in 0..<cols {
                 let rect = NSRect(x: area.minX + CGFloat(c) * cell, y: area.minY + CGFloat(r) * cell, width: cell, height: cell)
                 let k = tick + (c * 7 + r * 13) % 5      // 每格換字的節拍錯開
                 let x = rnd(c, r, k / 2)
-                var ch: Character, col: NSColor
+                var ch: Character, col: NSColor, key: String, alpha: CGFloat
                 if rect.maxY <= level {
                     if rnd(c, r, tick &* 3 &+ 1) < 0.05 {
-                        ch = "*"; col = NSColor.white.withAlphaComponent(0.7)
+                        ch = "*"; col = .white; key = "w"; alpha = 0.7
                     } else {
                         ch = dense[Int(x * CGFloat(dense.count)) % dense.count]
-                        col = color.blended(withFraction: 0.25 * rnd(c, r, k), of: .white)!.withAlphaComponent(0.45 + 0.2 * rnd(c, r, k + 9))
+                        let b = (rnd(c, r, k) * 4).rounded(.down) / 4          // 4 種亮度
+                        col = color.blended(withFraction: 0.25 * b, of: .white)!; key = "d\(b)\(hot)\(kind)"
+                        alpha = 0.45 + 0.2 * rnd(c, r, k + 9)
                     }
                 } else if rect.minY < level {
                     ch = surf[Int(x * CGFloat(surf.count)) % surf.count]
-                    col = color.withAlphaComponent(0.3 + 0.3 * rnd(c, r, tick))
+                    col = color; key = "s\(hot)\(kind)"; alpha = 0.3 + 0.3 * rnd(c, r, tick)
                 } else {
                     ch = dim[Int(x * CGFloat(dim.count)) % dim.count]
-                    col = NSColor.white.withAlphaComponent(0.10 + 0.08 * rnd(c, r, k))
+                    col = .white; key = "w"; alpha = 0.10 + 0.08 * rnd(c, r, k)
                 }
-                let str = NSAttributedString(string: String(ch), attributes: [.font: glyph, .foregroundColor: col])
-                let sz = str.size()
-                str.draw(at: NSPoint(x: rect.midX - sz.width / 2, y: rect.midY - sz.height / 2))
+                cg.setAlpha(alpha)
+                cg.draw(glyphImage(ch, col, glyph, cell, key), in: rect)
             }
         }
+
+        cg.restoreGState()
 
         // 7 天刻度：兩側的小括號
         if let long {
@@ -170,6 +196,7 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
         }
         NSGraphicsContext.restoreGraphicsState()
 
+        guard showNumber else { return true }
         // 數字（等寬）
         let num = "\(Int(short.rounded()))"
         let shadow = NSShadow()
@@ -236,8 +263,8 @@ final class OverlayView: NSView {
     var tick: Double?
     var phase: CGFloat = 0
     override func draw(_ dirty: NSRect) {
-        // 圖示在 Dock 項目框裡置中（2026-11-19 截圖量過，靠邊會偏 6pt）
-        let side = min(bounds.width, bounds.height)
+        // 圖示在 Dock 項目框裡置中，邊長＝框的短邊減 2pt（tilesize 37 時框高 39；2026-11-19 校準截圖量過）
+        let side = min(bounds.width, bounds.height) - 2
         let r = NSRect(x: bounds.midX - side / 2, y: bounds.midY - side / 2, width: side, height: side)
         renderIcon(kind: kind, base: nil, short: level, long: tick, phase: phase, size: side).draw(in: r)
     }
@@ -314,10 +341,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // 讀 Dock 圖示位置要「輔助使用」權限；第一次會跳系統的授權視窗
             AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary)
         }
-        if SMAppService.mainApp.status != .enabled { try? SMAppService.mainApp.register() }
+        // 第一次開啟時設成登入自動開；之後使用者關掉就尊重
+        if !UserDefaults.standard.bool(forKey: "didSetLoginItem") {
+            UserDefaults.standard.set(true, forKey: "didSetLoginItem")
+            try? SMAppService.mainApp.register()
+        }
         refresh()
         Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in self?.refresh() }
         schedule(fast: false)
+    }
+
+    /// 沒有任何介面：在 Finder 再開一次時，給一個能結束、能切換登入開啟的對話框
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        let zh = (Locale.preferredLanguages.first ?? "en").hasPrefix("zh")
+        let a = NSAlert()
+        a.messageText = zh ? "Dock Usage 正在執行" : "Dock Usage is running"
+        a.informativeText = AXIsProcessTrusted()
+            ? (zh ? "用量會疊在 Dock 裡的 Claude 和 ChatGPT 圖示上。" : "Usage is drawn on the Claude and ChatGPT icons in your Dock.")
+            : (zh ? "需要在「系統設定 › 隱私權與安全性 › 輔助使用」允許 Dock Usage，才能找到 Dock 圖示的位置。" : "Allow Dock Usage in System Settings › Privacy & Security › Accessibility so it can find the icons in your Dock.")
+        a.addButton(withTitle: zh ? "繼續執行" : "Keep Running")
+        a.addButton(withTitle: zh ? "結束" : "Quit")
+        let login = NSButton(checkboxWithTitle: zh ? "登入時開啟" : "Open at Login", target: nil, action: nil)
+        login.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        a.accessoryView = login
+        NSApp.activate()
+        let r = a.runModal()
+        if login.state == .on { try? SMAppService.mainApp.register() } else { try? SMAppService.mainApp.unregister() }
+        if r == .alertSecondButtonReturn { NSApp.terminate(nil) }
+        return false
     }
 
     func refresh() {
@@ -359,7 +410,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         // 收起時只讀一個圖示的位置，還在螢幕外就不做別的
-        if !fast, let item = overlays.lazy.compactMap({ $0.item }).first,
+        if !fast, ProcessInfo.processInfo.environment["DOCKUSAGE_FAKE"] == nil, let item = overlays.lazy.compactMap({ $0.item }).first,
            let pv = ax(item, kAXPositionAttribute) {
             var p = CGPoint.zero
             AXValueGetValue(pv as! AXValue, .cgPoint, &p)
@@ -395,6 +446,35 @@ if args.count >= 6, args[1] == "--snapshot", let k = Kind(rawValue: args[2]) {
     }
     let rep = NSBitmapImageRep(data: img.tiffRepresentation!)!
     try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: args[5]))
+    exit(0)
+}
+// App 圖示：深色圓角方塊＋ASCII 水位（不用任何人的商標）。DockUsage --appicon <out.png> [size]
+if args.count >= 3, args[1] == "--appicon" {
+    let size = args.count > 3 ? CGFloat(Double(args[3]) ?? 1024) : 1024
+    let base = NSImage(size: NSSize(width: size, height: size), flipped: false) { _ in
+        let inset = size * 100 / 1024
+        let body = NSRect(x: inset, y: inset, width: size - inset * 2, height: size - inset * 2)
+        NSGradient(starting: NSColor(white: 0.20, alpha: 1), ending: NSColor(white: 0.06, alpha: 1))!
+            .draw(in: NSBezierPath(roundedRect: body, xRadius: body.width * 0.225, yRadius: body.width * 0.225), angle: -90)
+        return true
+    }
+    let img = renderIcon(kind: .gpt, base: base, short: 62, long: nil, phase: 2.0, size: size, showNumber: false)
+    let rep = NSBitmapImageRep(data: img.tiffRepresentation!)!
+    try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: args[2]))
+    exit(0)
+}
+if args.count >= 2, args[1] == "--bench" {
+    // 畫一格的耗時（疊加層實際尺寸 39pt @2x）與 AX 讀位置的耗時
+    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 78, pixelsHigh: 78, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+    let ctx = NSGraphicsContext(bitmapImageRep: rep)!
+    NSGraphicsContext.current = ctx
+    var t = CACurrentMediaTime()
+    for i in 0..<300 { renderIcon(kind: .claude, base: nil, short: 57, long: 30, phase: CGFloat(i) * 0.3, size: 39).draw(in: NSRect(x: 0, y: 0, width: 39, height: 39)) }
+    print("draw ms/frame:", (CACurrentMediaTime() - t) / 300 * 1000)
+    let items = dockItems()
+    t = CACurrentMediaTime()
+    for _ in 0..<300 { for (_, it) in items.prefix(2) { _ = frame(of: it) } }
+    print("ax ms/frame (2 items):", (CACurrentMediaTime() - t) / 300 * 1000)
     exit(0)
 }
 if args.count >= 2, args[1] == "--dock" {
