@@ -98,7 +98,7 @@ func loadCodex() -> Usage {
 
 // MARK: - Icon render
 
-/// 原 app 圖示壓暗 + 10 格燈條（5 小時）+ 兩側刻度（7 天）+ 百分比數字
+/// 原 app 圖示壓暗 + ASCII 字元格水位（5 小時）+ 兩側刻度（7 天）+ 百分比數字
 func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase: CGFloat, size: CGFloat = 512) -> NSImage {
     NSImage(size: NSSize(width: size, height: size), flipped: false) { _ in
         let s = size
@@ -117,35 +117,46 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
         NSGraphicsContext.saveGraphicsState()
         shape.addClip()
 
-        // 整個圖示壓暗，燈格才亮得起來
-        NSColor.black.withAlphaComponent(0.62).setFill()
+        // 整個圖示壓暗
+        NSColor.black.withAlphaComponent(0.72).setFill()
         body.fill()
 
-        // 10 格燈條，每格 10%，由下往上亮
-        let n = 10
-        let padX = body.width * 0.14, padY = body.height * 0.10
-        let area = body.insetBy(dx: padX, dy: padY)
-        let pitch = area.height / CGFloat(n)
-        let barH = pitch * 0.62
-        let lit = p * CGFloat(n)                      // 例如 5.7 格
-        let scanY = (phase * 0.35).truncatingRemainder(dividingBy: 1.4) - 0.2   // 掃描光 0→1 循環
-        for i in 0..<n {
-            let r = NSRect(x: area.minX, y: area.minY + CGFloat(i) * pitch + (pitch - barH) / 2, width: area.width, height: barH)
-            let path = NSBezierPath(roundedRect: r, xRadius: barH * 0.25, yRadius: barH * 0.25)
-            let fill = min(max(lit - CGFloat(i), 0), 1)
-            if fill >= 1 {
-                // 掃描光經過時這格變亮
-                let glow = max(0, 1 - abs(CGFloat(i) + 0.5 - scanY * lit) / 1.2)
-                color.blended(withFraction: glow * 0.6, of: .white)!.setFill()
-                path.fill()
-            } else if fill > 0 {
-                // 最上面沒滿的那格：呼吸閃爍
-                let breathe = 0.35 + 0.45 * (0.5 + 0.5 * sin(phase * 2.2))
-                color.withAlphaComponent(breathe).setFill()
-                path.fill()
-            } else {
-                NSColor.white.withAlphaComponent(0.10).setFill()
-                path.fill()
+        // ASCII 格子：用掉的部分由密字元填滿、隨機跳字＋白色閃光；水面那排淡字元翻騰；空的部分只留淡點
+        let cols = 10
+        let area = body
+        let cell = area.width / CGFloat(cols)
+        let level = area.minY + area.height * p
+        let tick = Int(phase * 4)                       // 每秒約 13 次換字
+        let glyph = NSFont.monospacedSystemFont(ofSize: cell * 1.15, weight: .bold)
+        func rnd(_ c: Int, _ r: Int, _ k: Int) -> CGFloat {
+            var h = UInt64(truncatingIfNeeded: c &* 73856093 ^ r &* 19349663 ^ k &* 83492791)
+            h ^= h >> 33; h = h &* 0xff51afd7ed558ccd; h ^= h >> 33
+            return CGFloat(h % 10000) / 10000
+        }
+        let dense = Array("@#%&*+=$"), surf = Array(".:-=~"), dim = Array(".:-+=")
+        for r in 0..<cols {
+            for c in 0..<cols {
+                let rect = NSRect(x: area.minX + CGFloat(c) * cell, y: area.minY + CGFloat(r) * cell, width: cell, height: cell)
+                let k = tick + (c * 7 + r * 13) % 5      // 每格換字的節拍錯開
+                let x = rnd(c, r, k / 2)
+                var ch: Character, col: NSColor
+                if rect.maxY <= level {
+                    if rnd(c, r, tick &* 3 &+ 1) < 0.05 {
+                        ch = "*"; col = .white
+                    } else {
+                        ch = dense[Int(x * CGFloat(dense.count)) % dense.count]
+                        col = color.blended(withFraction: 0.25 * rnd(c, r, k), of: .white)!.withAlphaComponent(0.75 + 0.25 * rnd(c, r, k + 9))
+                    }
+                } else if rect.minY < level {
+                    ch = surf[Int(x * CGFloat(surf.count)) % surf.count]
+                    col = color.withAlphaComponent(0.45 + 0.5 * rnd(c, r, tick))
+                } else {
+                    ch = dim[Int(x * CGFloat(dim.count)) % dim.count]
+                    col = NSColor.white.withAlphaComponent(0.14 + 0.12 * rnd(c, r, k))
+                }
+                let str = NSAttributedString(string: String(ch), attributes: [.font: glyph, .foregroundColor: col])
+                let sz = str.size()
+                str.draw(at: NSPoint(x: rect.midX - sz.width / 2, y: rect.midY - sz.height / 2))
             }
         }
 
@@ -168,6 +179,9 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
         let str = NSMutableAttributedString(string: num, attributes: [.font: font, .foregroundColor: NSColor.white, .shadow: shadow])
         str.append(NSAttributedString(string: "%", attributes: [.font: NSFont.monospacedSystemFont(ofSize: s * 0.12, weight: .bold), .foregroundColor: NSColor.white.withAlphaComponent(0.85), .shadow: shadow]))
         let sz = str.size()
+        let plate = NSRect(x: body.midX - sz.width / 2 - s * 0.03, y: body.midY - sz.height / 2, width: sz.width + s * 0.06, height: sz.height)
+        NSColor.black.withAlphaComponent(0.55).setFill()
+        NSBezierPath(roundedRect: plate, xRadius: s * 0.03, yRadius: s * 0.03).fill()
         str.draw(at: NSPoint(x: body.midX - sz.width / 2, y: body.midY - sz.height / 2))
         return true
     }
@@ -219,22 +233,15 @@ func log(_ m: String) {
 
 // MARK: - 疊在 Dock 圖示上的透明視窗
 
-let dockOrientation = UserDefaults(suiteName: "com.apple.dock")?.string(forKey: "orientation") ?? "bottom"
-
 final class OverlayView: NSView {
     var kind: Kind = .claude
     var level: Double?
     var tick: Double?
     var phase: CGFloat = 0
     override func draw(_ dirty: NSRect) {
-        // Dock 項目的感應區比圖示大，多出來的一側放「執行中」小圓點：圖示貼在另一側
+        // 圖示在 Dock 項目框裡置中（2026-11-19 截圖量過，靠邊會偏 6pt）
         let side = min(bounds.width, bounds.height)
-        var r = NSRect(x: bounds.midX - side / 2, y: bounds.midY - side / 2, width: side, height: side)
-        switch dockOrientation {
-        case "left": r.origin.x = bounds.maxX - side
-        case "right": r.origin.x = bounds.minX
-        default: r.origin.y = bounds.maxY - side
-        }
+        let r = NSRect(x: bounds.midX - side / 2, y: bounds.midY - side / 2, width: side, height: side)
         renderIcon(kind: kind, base: nil, short: level, long: tick, phase: phase, size: side).draw(in: r)
     }
 }
@@ -246,6 +253,8 @@ final class Overlay {
     var usage = Usage()
     var shown: Double = 0
     var item: AXUIElement?
+    var lastTick = -1
+    var lastLevel = 0.0
 
     init(kind: Kind) {
         self.kind = kind
@@ -279,7 +288,12 @@ final class Overlay {
         view.level = shown
         view.tick = usage.short == nil ? nil : usage.long?.pct
         view.phase = phase
-        view.needsDisplay = true
+        // 字元每秒換約 13 次：只有換字、水位在動或尺寸變了才重畫
+        let t = Int(phase * 4)
+        if t != lastTick || abs((view.level ?? 0) - lastLevel) > 0.01 || window.frame.size != f.size {
+            lastTick = t; lastLevel = view.level ?? 0
+            view.needsDisplay = true
+        }
         if window.frame != f { window.setFrame(f, display: true) }
         if !window.isVisible { window.orderFrontRegardless() }
         return true
