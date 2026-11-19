@@ -167,7 +167,7 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
 
         // 只有用掉的部分（水位以下）壓暗＋染色，上面維持原圖示：多少 % 就滿到多少；水面是流動的波浪
         let waterLevel = body.minY + body.height * p
-        let amp = p > 0.01 && p < 0.99 ? s * 0.05 : 0
+        let amp = p > 0.01 && p < 0.99 ? s * 0.025 : 0
         func waveY(_ x: CGFloat, _ offset: CGFloat = 0, _ a: CGFloat? = nil, _ dir: CGFloat = 1) -> CGFloat {
             waterLevel + sin((x - body.minX) / body.width * .pi * 2 * 1.3 + phase * dir + offset) * (a ?? amp)
         }
@@ -180,8 +180,12 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
             path.close()
             return path
         }
-        color.withAlphaComponent(0.22).setFill()
-        wave(.pi * 0.7, amp * 0.8, -0.7).fill()      // 後層反向流
+        let back = wave(.pi * 0.7, amp, -0.7)          // 後層反向流，比前層高一點、淡一點
+        let lift = NSAffineTransform(); lift.translateX(by: 0, yBy: s * 0.025); back.transform(using: lift as AffineTransform)
+        NSColor.black.withAlphaComponent(0.20).setFill()
+        back.fill()
+        color.withAlphaComponent(0.30).setFill()
+        back.fill()
         let front = wave(0, amp)
         NSColor.black.withAlphaComponent(0.40).setFill()
         front.fill()
@@ -243,8 +247,8 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
         var cx = body.minX - 2
         crest.move(to: NSPoint(x: cx, y: waveY(cx)))
         while cx <= body.maxX + 2 { cx += s / 64; crest.line(to: NSPoint(x: cx, y: waveY(cx))) }
-        crest.lineWidth = s * 0.012
-        NSColor.white.withAlphaComponent(amp > 0 ? 0.8 : 0).setStroke()
+        crest.lineWidth = s * 0.006
+        NSColor.white.withAlphaComponent(amp > 0 ? 0.25 : 0).setStroke()
         crest.stroke()
 
         // 7 天刻度：兩側的小括號
