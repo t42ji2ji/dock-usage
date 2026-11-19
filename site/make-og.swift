@@ -1,6 +1,6 @@
 // 分享預覽圖：影片封面當主視覺＋app 圖示和標語。swiftc make-og.swift -o /tmp/og && /tmp/og <appicon512.png> og-image.png
 import AppKit
-let poster = NSImage(contentsOfFile: "/Users/dora/me/usage-meter/site/assets/intro-poster.jpg")!
+let poster = NSImage(contentsOfFile: "/Users/dora/me/dock-usage/site/assets/intro-poster.jpg")!
 let W: CGFloat = 1200, H: CGFloat = 630
 let img = NSImage(size: NSSize(width: W, height: H), flipped: false) { _ in
   NSColor.black.setFill(); NSRect(x: 0, y: 0, width: W, height: H).fill()
