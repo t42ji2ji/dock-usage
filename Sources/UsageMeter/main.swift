@@ -194,6 +194,31 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
     }
 }
 
+// MARK: - Dock 有沒有滑出來
+
+/// 有「輔助使用」權限時讀 Dock 第一個圖示的位置：自動隱藏收起時它在螢幕外，這時不重畫省電。
+/// 沒權限就當作一直看得到。
+func dockVisible() -> Bool {
+    guard AXIsProcessTrusted(),
+          let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else { return true }
+    func children(_ e: AXUIElement) -> [AXUIElement] {
+        var v: AnyObject?
+        AXUIElementCopyAttributeValue(e, kAXChildrenAttribute as CFString, &v)
+        return v as? [AXUIElement] ?? []
+    }
+    guard let item = children(AXUIElementCreateApplication(dock.processIdentifier)).first.flatMap({ children($0).first }) else { return true }
+    var v: AnyObject?
+    var p = CGPoint.zero, sz = CGSize.zero
+    AXUIElementCopyAttributeValue(item, kAXPositionAttribute as CFString, &v)
+    if let v { AXValueGetValue(v as! AXValue, .cgPoint, &p) }
+    AXUIElementCopyAttributeValue(item, kAXSizeAttribute as CFString, &v)
+    if let v { AXValueGetValue(v as! AXValue, .cgSize, &sz) }
+    let r = CGRect(origin: p, size: sz)
+    var ids = [CGDirectDisplayID](repeating: 0, count: 16), n: UInt32 = 0
+    CGGetActiveDisplayList(16, &ids, &n)
+    return ids.prefix(Int(n)).contains { CGDisplayBounds($0).intersects(r) }
+}
+
 // MARK: - App
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -211,7 +236,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.kind = kind
         let path = kind.appPaths.first { FileManager.default.fileExists(atPath: $0) }
         appURL = path.map { URL(fileURLWithPath: $0) }
-        base = path.map { NSWorkspace.shared.icon(forFile: $0) }
+        // icns 有一堆尺寸，每格重解很貴：先壓成一張 256px 點陣圖
+        base = path.map { p in
+            let icon = NSWorkspace.shared.icon(forFile: p)
+            let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 256, pixelsHigh: 256, bitsPerSample: 8, samplesPerPixel: 4,
+                                       hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            icon.draw(in: NSRect(x: 0, y: 0, width: 256, height: 256))
+            NSGraphicsContext.restoreGraphicsState()
+            let img = NSImage(size: NSSize(width: 256, height: 256)); img.addRepresentation(rep); return img
+        }
     }
 
     func applicationDidFinishLaunching(_ n: Notification) {
@@ -231,24 +266,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func apply(_ u: Usage) {
         guard u != usage else { return }
         usage = u
-        animate()
+        if anim == nil { animate() }
     }
 
-    /// 數字變了才動：水位用 1.2 秒漲／退到新位置，期間波浪流動，停下就不再重畫。
+    /// 水面一直流動；數字變了水位會慢慢漲／退過去
     func animate() {
-        anim?.invalidate()
-        let from = shown, to = primary?.pct ?? 0
-        let start = Date(), dur = 1.2
-        anim = Timer.scheduledTimer(withTimeInterval: 1.0 / 24, repeats: true) { [weak self] t in
-            guard let self else { return t.invalidate() }
-            let k = min(Date().timeIntervalSince(start) / dur, 1)
-            let e = 1 - pow(1 - k, 3)
-            self.shown = from + (to - from) * e
-            self.phase += 0.35
-            self.draw()
-            if k >= 1 { t.invalidate() }
+        anim = Timer.scheduledTimer(withTimeInterval: 1.0 / Self.fps, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let to = self.primary?.pct ?? 0
+            self.shown += (to - self.shown) * 0.12
+            if abs(to - self.shown) < 0.05 { self.shown = to }
+            self.phase += 0.9 / CGFloat(Self.fps)   // 約 7 秒流過一個波
+            self.tick += 1
+            if self.tick % 6 == 0 { self.dockShown = dockVisible() }
+            if self.dockShown { self.draw() }
         }
     }
+    static let fps = 12.0
+    var tick = 0
+    var dockShown = true
 
     /// 水位：有 5 小時就用 5 小時、7 天畫虛線；只有 7 天（Claude 有時只給這格）就用 7 天當水位
     var primary: Window? { usage.short ?? usage.long }
@@ -256,8 +292,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func draw() {
         let level = primary == nil ? nil : shown
         let tick = usage.short == nil ? nil : usage.long?.pct
-        NSApp.applicationIconImage = renderIcon(kind: kind, base: base, short: level, long: tick, phase: phase, size: 256)
+        let img = renderIcon(kind: kind, base: base, short: level, long: tick, phase: phase, size: Self.px)
+        // 自己畫進 8-bit 點陣圖再交出去；直接給延遲繪製的 NSImage，AppKit 會用 16-bit 浮點每格重畫好幾次
+        let ctx = NSGraphicsContext(bitmapImageRep: frame)!
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = ctx
+        ctx.cgContext.clear(CGRect(x: 0, y: 0, width: Self.px, height: Self.px))
+        img.draw(in: NSRect(x: 0, y: 0, width: Self.px, height: Self.px))
+        NSGraphicsContext.restoreGraphicsState()
+        let out = NSImage(size: NSSize(width: Self.px, height: Self.px))
+        out.addRepresentation(frame.copy() as! NSBitmapImageRep)
+        // Dock 走 contentView（便宜）；⌘Tab 只認 applicationIconImage（貴），隔 5 秒才換一次
+        tileView.image = out
+        NSApp.dockTile.display()
+        if Date().timeIntervalSince(lastAppIcon) > 5 {
+            lastAppIcon = Date()
+            NSApp.applicationIconImage = out
+        }
     }
+    var lastAppIcon = Date.distantPast
+    lazy var tileView: NSImageView = {
+        let v = NSImageView(frame: NSRect(origin: .zero, size: NSApp.dockTile.size))
+        v.imageScaling = .scaleProportionallyUpOrDown
+        NSApp.dockTile.contentView = v
+        return v
+    }()
+    static let px: CGFloat = 192
+    let frame = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(px), pixelsHigh: Int(px), bitsPerSample: 8, samplesPerPixel: 4,
+                                 hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
 
     // 點 Dock 圖示或 ⌘Tab 切過來 → 打開真正的 app
     func openReal() {
@@ -320,6 +382,7 @@ if args.count >= 6, args[1] == "--snapshot", let k = Kind(rawValue: args[2]) {
     try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: args[5]))
     exit(0)
 }
+if args.count >= 2, args[1] == "--dock" { print("trusted:", AXIsProcessTrusted(), "visible:", dockVisible()); exit(0) }
 if args.count >= 2, args[1] == "--dump", args.count >= 3, let k = Kind(rawValue: args[2]) {
     let raw = k == .claude ? loadClaude() : loadCodex()
     print("raw:", raw)
