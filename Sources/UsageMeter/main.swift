@@ -138,9 +138,12 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
         NSGraphicsContext.saveGraphicsState()
         shape.addClip()
 
-        // 整個圖示壓暗
-        NSColor.black.withAlphaComponent(0.35).setFill()
-        body.fill()
+        // 只有用掉的部分（水位以下）壓暗＋染色，上面維持原圖示：多少 % 就滿到多少
+        let filled = NSRect(x: body.minX, y: body.minY, width: body.width, height: body.height * p)
+        NSColor.black.withAlphaComponent(0.40).setFill()
+        filled.fill()
+        color.withAlphaComponent(0.22).setFill()
+        filled.fill()
 
         // ASCII 格子：用掉的部分由密字元填滿、隨機跳字＋白色閃光；水面那排淡字元翻騰；空的部分只留淡點
         let cols = 10
@@ -170,14 +173,14 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
                         ch = dense[Int(x * CGFloat(dense.count)) % dense.count]
                         let b = (rnd(c, r, k) * 4).rounded(.down) / 4          // 4 種亮度
                         col = color.blended(withFraction: 0.25 * b, of: .white)!; key = "d\(b)\(hot)\(kind)"
-                        alpha = 0.45 + 0.2 * rnd(c, r, k + 9)
+                        alpha = 0.6 + 0.3 * rnd(c, r, k + 9)
                     }
                 } else if rect.minY < level {
                     ch = surf[Int(x * CGFloat(surf.count)) % surf.count]
                     col = color; key = "s\(hot)\(kind)"; alpha = 0.3 + 0.3 * rnd(c, r, tick)
                 } else {
                     ch = dim[Int(x * CGFloat(dim.count)) % dim.count]
-                    col = .white; key = "w"; alpha = 0.10 + 0.08 * rnd(c, r, k)
+                    col = .white; key = "w"; alpha = 0.06 + 0.06 * rnd(c, r, k)
                 }
                 cg.setAlpha(alpha)
                 cg.draw(glyphImage(ch, col, glyph, cell, key), in: rect)
@@ -189,10 +192,14 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
         // 7 天刻度：兩側的小括號
         if let long {
             let y = area.minY + area.height * CGFloat(min(max(long, 0), 100)) / 100
-            NSColor.white.withAlphaComponent(0.9).setFill()
-            let w = body.width * 0.07, h = max(s * 0.02, 1)
-            NSRect(x: body.minX + body.width * 0.03, y: y - h / 2, width: w, height: h).fill()
-            NSRect(x: body.maxX - body.width * 0.03 - w, y: y - h / 2, width: w, height: h).fill()
+            let w = body.width * 0.07, h = max(s * 0.025, 1)
+            for x in [body.minX + body.width * 0.03, body.maxX - body.width * 0.03 - w] {
+                let r = NSRect(x: x, y: y - h / 2, width: w, height: h)
+                NSColor.black.withAlphaComponent(0.6).setFill()
+                r.insetBy(dx: -s * 0.008, dy: -s * 0.008).fill()
+                NSColor.white.setFill()
+                r.fill()
+            }
         }
         NSGraphicsContext.restoreGraphicsState()
 
@@ -203,8 +210,10 @@ func renderIcon(kind: Kind, base: NSImage?, short: Double?, long: Double?, phase
         shadow.shadowColor = NSColor.black.withAlphaComponent(0.85)
         shadow.shadowBlurRadius = s * 0.03
         let font = NSFont.monospacedSystemFont(ofSize: s * 0.26, weight: .heavy)
-        let str = NSMutableAttributedString(string: num, attributes: [.font: font, .foregroundColor: NSColor.white, .shadow: shadow])
-        str.append(NSAttributedString(string: "%", attributes: [.font: NSFont.monospacedSystemFont(ofSize: s * 0.12, weight: .bold), .foregroundColor: NSColor.white.withAlphaComponent(0.85), .shadow: shadow]))
+        let str = NSMutableAttributedString(string: num, attributes: [.font: font, .foregroundColor: NSColor.white, .shadow: shadow,
+                                                                        .strokeColor: NSColor.black.withAlphaComponent(0.7), .strokeWidth: -4])
+        str.append(NSAttributedString(string: "%", attributes: [.font: NSFont.monospacedSystemFont(ofSize: s * 0.12, weight: .bold), .foregroundColor: NSColor.white, .shadow: shadow,
+                                                                        .strokeColor: NSColor.black.withAlphaComponent(0.7), .strokeWidth: -4]))
         let sz = str.size()
         str.draw(at: NSPoint(x: body.midX - sz.width / 2, y: body.midY - sz.height / 2))
         return true
