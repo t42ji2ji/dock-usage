@@ -1,92 +1,57 @@
 <div align="center">
 
-<img src="docs/icon.png" width="112" alt="Dock Usage 圖示">
+<img src="site/assets/icon.png" width="96" alt="Dock Usage 圖示">
 
 # Dock Usage
 
-把 Claude 和 ChatGPT 的用量，直接畫在它們的 Dock 圖示上。
+把 Claude 和 ChatGPT 額度、硬碟、垃圾桶、瀏覽器時間，直接畫在 Dock 圖示上。
 
-[**下載**](https://github.com/t42ji2ji/dock-usage/releases/latest/download/DockUsage.dmg) · [English](README.md)
+**[官網](https://dockusage.dorara.app)** · **[下載](https://github.com/t42ji2ji/dock-usage/releases/latest/download/DockUsage.dmg)** · [English](README.md)
 
-<img src="docs/claude.png" width="160" alt="Claude 圖示，用量 57%"> <img src="docs/chatgpt.png" width="160" alt="ChatGPT 圖示，用量 38%">
+<a href="https://dockusage.dorara.app"><img src="site/assets/intro-poster.jpg" width="720" alt="Dock 上 Chrome 顯示 2.8 小時、Claude 86% 並有 2 個 session 在等、ChatGPT 38%"></a>
 
 </div>
 
 ## 顯示什麼
 
-**5 小時額度**用掉多少，圖示就從下往上鋪滿多少，中間的數字是百分比。左右兩側的小刻度是**每週額度**。超過 80% 轉紅。樣子有四種可選：閃爍的 ASCII 字元、玻璃杯裡的液體、LED 點陣、發光的邊緣。
+| | |
+|:-:|---|
+| <img src="site/assets/claude.webp" width="72"> <img src="site/assets/gpt.webp" width="72"> | **Claude 和 ChatGPT**：5 小時額度用多少就鋪滿多少，兩側刻度是每週額度，超過 80% 轉紅。從 Claude Code 和 Codex 讀。 |
+| <img src="site/assets/claude-red.webp" width="72"> | **有 session 在等你**：在 [cmux](https://cmux.com) 跑 Claude Code 時，紅點是做完或在等你的分頁數。 |
+| <img src="site/assets/finder.webp" width="72"> <img src="site/assets/trash.webp" width="72"> | **硬碟和垃圾桶**：Finder 照硬碟用量鋪滿，垃圾桶照裡面的東西鋪滿（30 樣算滿）。 |
+| <img src="site/assets/chrome.webp" width="72"> | **瀏覽器時間**：Chrome、Arc、Edge、Brave、ego lite 照今天用了多久鋪滿（8 小時算滿），滑鼠停上去看前五名網站。 |
+| <img src="site/assets/note.png" width="150"> | **最新通知**：滑鼠停在 app 上，看它最後跳出的通知。 |
 
-- **Claude**：Claude 方案的額度，從 Claude Code 讀。
-- **ChatGPT**：ChatGPT 方案裡 Codex 的額度，從 Codex 讀。
-
-每次用 Claude Code 或 Codex 時數字就會更新。已經過了重置時間的額度會歸零。
-
-### Finder 和垃圾桶
-
-Finder 圖示照硬碟用了多少鋪滿，中間寫百分比。垃圾桶照裡面有幾樣東西鋪滿，30 樣算滿。
-
-### 今天在瀏覽器待了多久
-
-Chrome、Arc、Edge、Brave、ego lite 的圖示照今天用了多久鋪滿，8 小時算滿。滑鼠停上去會列出前五個最常待的網站。時間來自瀏覽器自己的瀏覽紀錄裡每個頁面在前景停了多久，只算今天。
-
-### 滑過 Dock 看最新通知
-
-滑鼠停在 Dock 的 app 上，就能看到它最後跳出的那則通知，例如 LINE 訊息。打開那個 app 就會清掉。只記 Dock Usage 開著時跳到畫面上的通知，而且只存在記憶體裡。
-
-### 在 cmux 裡跑 Claude Code 時的紅點
-
-在 [cmux](https://cmux.com) 裡跑 Claude Code 的話，Claude 圖示右上角會出現紅點和數字（Claude 自己有紅點時改到左上角），代表 cmux 裡有幾個分頁亮著通知：回合做完、要權限、或在等你輸入。點進那些分頁就會消失，不用設定。
+<div align="center">
+<img src="site/assets/look-ascii.webp" width="96" alt="ASCII"> <img src="site/assets/look-liquid.webp" width="96" alt="液體"> <img src="site/assets/look-dots.webp" width="96" alt="LED 點陣"> <img src="site/assets/look-ring.webp" width="96" alt="光邊">
+<br><sub>四種樣子：ASCII · 液體 · LED 點陣 · 光邊</sub>
+</div>
 
 ## 安裝
 
-1. 下載 [DockUsage.dmg](https://github.com/t42ji2ji/dock-usage/releases/latest/download/DockUsage.dmg)，把 Dock Usage 拖進「應用程式」。
-2. 打開它。歡迎畫面會帶你允許**輔助使用**（用來找到圖示在 Dock 的位置）、選要顯示什麼、選一種樣子。允許之後它會自己重開。
-3. 讓想看的 app 留在 Dock 上（開著或釘選都可以）。
+下載 [DockUsage.dmg](https://github.com/t42ji2ji/dock-usage/releases/latest/download/DockUsage.dmg)，拖進「應用程式」後打開，導覽會帶你開輔助使用權限、選要顯示什麼。需要 macOS 14 以上、Apple Silicon。
 
-Dock Usage 沒有自己的 Dock 圖示，登入時自動開啟。要改顯示內容、換樣子或結束，從「應用程式」再打開它一次。瀏覽器時間和通知會讀到私人內容，所以預設關閉，要自己打開。
+Claude 需要 Pro 或 Max 方案，導覽會幫你設好 Claude Code 狀態列；ChatGPT 不用設定。
 
-需要 macOS 14 以上、Apple Silicon。
+<details>
+<summary>已經有自己的 Claude Code 狀態列？</summary>
 
-### Claude：接上 Claude Code
-
-Claude Code 會把方案額度傳給它的[狀態列](https://code.claude.com/docs/en/statusline)指令，Dock Usage 從 `~/.claude/dock-usage/claude.json` 讀。
-
-還沒有狀態列的話，歡迎畫面會幫你設好。已經有自己的狀態列，就在腳本把輸入讀進 `$input` 之後加上：
+在腳本把輸入讀進 `$input` 之後加上：
 
 ```sh
 mkdir -p "$HOME/.claude/dock-usage"
 printf '%s' "$input" > "$HOME/.claude/dock-usage/claude.json.$$" && mv -f "$HOME/.claude/dock-usage/claude.json.$$" "$HOME/.claude/dock-usage/claude.json"
 ```
-
-需要 Claude Pro 或 Max 方案。
-
-### ChatGPT：不用設定
-
-Codex 會把額度寫進 `~/.codex/sessions` 底下的對話紀錄，Dock Usage 讀最新那份。
+</details>
 
 ## 隱私
 
-Dock Usage 只讀上面這兩個本機檔案，有裝 cmux 的話再讀它的通知清單，以及畫面上跳出的通知橫幅、ego lite 和 Chrome 今天的瀏覽紀錄，不連網，也不碰你的登入憑證。
+資料不離開你的 Mac。只讀 Claude Code 和 Codex 本來就寫在本機的額度檔、cmux 的通知清單、畫面上跳出的通知，和今天的瀏覽紀錄。不連網，也不碰登入憑證。⌘Tab 切換器蓋不到，只有 Dock。
 
-## 限制
+## 從原始碼建置
 
-- ⌘Tab 切換視窗那排還是原本的圖示，只有 Dock 會顯示。
-- Dock 滑出或放大時，疊加層會跟著移動，可能慢一格。
+`./build.sh` 會產生 `build/Dock Usage.app`（需要 Xcode 16 command line tools）。把 `build.sh` 和 `release.sh` 裡的簽名身分換成你自己的。
 
-## 從原始碼編譯
+---
 
-需要 Xcode 16 command line tools。
-
-```sh
-./build.sh        # 產出 "build/Dock Usage.app"
-```
-
-把 `build.sh` 和 `release.sh` 裡的簽名身分換成自己的。
-
-## 致謝
-
-靈感來自 [IconSwapper](https://iconswapper.app/)：它能在 Dock 圖示上顯示即時資訊。Dock Usage 是把這個點子拿來顯示 AI 用量和 Mac 日常資訊的開源版本，與它無關。
-
-## 授權
-
-GPL-3.0。Claude 和 ChatGPT 是 Anthropic 和 OpenAI 的商標，Dock Usage 與兩家公司無關。
+靈感來自 [IconSwapper](https://iconswapper.app/)。GPL-3.0。Claude 和 ChatGPT 是 Anthropic 和 OpenAI 的商標，Dock Usage 與兩家公司無關。
