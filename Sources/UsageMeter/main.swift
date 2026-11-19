@@ -227,6 +227,13 @@ func onScreen(_ r: CGRect) -> Bool {
     return ids.prefix(Int(n)).contains { CGDisplayBounds($0).insetBy(dx: 1, dy: 1).intersects(r) }
 }
 
+let logURL = home.appendingPathComponent("Library/Logs/DockUsage.log")
+func log(_ m: String) {
+    let line = "\(Date()) \(m)\n"
+    if let h = try? FileHandle(forWritingTo: logURL) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
+    else { try? line.write(to: logURL, atomically: true, encoding: .utf8) }
+}
+
 // MARK: - 疊在 Dock 圖示上的透明視窗
 
 final class OverlayView: NSView {
@@ -257,7 +264,7 @@ final class Overlay {
         window.backgroundColor = .clear
         window.hasShadow = false
         window.ignoresMouseEvents = true
-        window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 1)
+        window.level = .popUpMenu
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         window.contentView = view
     }
@@ -266,7 +273,9 @@ final class Overlay {
 
     /// 每格：追 Dock 項目位置，水位往目標靠，重畫
     func step(phase: CGFloat) -> Bool {
-        guard let item, let r = frame(of: item), onScreen(r), primary != nil else {
+        let fake = ProcessInfo.processInfo.environment["DOCKUSAGE_FAKE"].map { v -> CGRect in
+            let n = v.split(separator: ",").compactMap { Double($0) }; return CGRect(x: n[0], y: n[1] + (kind == .gpt ? n[3] : 0), width: n[2], height: n[3]) }
+        guard let r = fake ?? item.flatMap(frame), fake != nil || onScreen(r), primary != nil else {
             if window.isVisible { window.orderOut(nil) }
             return false
         }
@@ -325,8 +334,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         RunLoop.main.add(timer!, forMode: .common)
     }
 
+    var lastTrusted: Bool?
     func frameTick() {
-        guard AXIsProcessTrusted() else { return }
+        let t = AXIsProcessTrusted()
+        if t != lastTrusted { lastTrusted = t; log("trusted=\(t)") }
+        guard t else { return }
         if Date().timeIntervalSince(lastScan) > 2 || overlays.contains(where: { $0.item == nil && Date().timeIntervalSince(lastScan) > 0.5 }) {
             lastScan = Date()
             let items = dockItems()
@@ -336,7 +348,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         phase += 0.9 / 30
         let anyVisible = overlays.map { $0.step(phase: phase) }.contains(true)
-        if anyVisible != fast { schedule(fast: anyVisible) }
+        if anyVisible != fast {
+            log("visible=\(anyVisible) " + overlays.map { o in "\(o.kind) item=\(o.item != nil) frame=\(o.item.flatMap(frame).map { "\($0)" } ?? "-") win=\(o.window.frame) level=\(o.primary?.pct ?? -1)" }.joined(separator: " | "))
+            schedule(fast: anyVisible)
+        }
     }
 }
 
