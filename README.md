@@ -83,6 +83,10 @@ Requires Xcode 16 command line tools.
 
 Replace the signing identity in `build.sh` and `release.sh` with your own.
 
+## Thanks
+
+Inspired by [IconSwapper](https://iconswapper.app/), which shows live info on Dock icons. Dock Usage is a separate, open-source take on the idea for AI usage and everyday Mac stats.
+
 ## License
 
 GPL-3.0. Claude and ChatGPT are trademarks of Anthropic and OpenAI. Dock Usage is not affiliated with either.

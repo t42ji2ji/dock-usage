@@ -83,6 +83,10 @@ Dock Usage 只讀上面這兩個本機檔案，有裝 cmux 的話再讀它的通
 
 把 `build.sh` 和 `release.sh` 裡的簽名身分換成自己的。
 
+## 致謝
+
+靈感來自 [IconSwapper](https://iconswapper.app/)：它能在 Dock 圖示上顯示即時資訊。Dock Usage 是把這個點子拿來顯示 AI 用量和 Mac 日常資訊的開源版本，與它無關。
+
 ## 授權
 
 GPL-3.0。Claude 和 ChatGPT 是 Anthropic 和 OpenAI 的商標，Dock Usage 與兩家公司無關。
