@@ -21,6 +21,10 @@
 
 每次用 Claude Code 或 Codex 時數字就會更新。已經過了重置時間的額度會歸零。
 
+### 在 cmux 裡跑 Claude Code 時的紅點
+
+在 [cmux](https://cmux.com) 裡跑 Claude Code 的話，Claude 圖示左上角會出現紅點和數字，代表 cmux 裡有幾個分頁亮著通知：回合做完、要權限、或在等你輸入。點進那些分頁就會消失，不用設定。
+
 ## 安裝
 
 1. 下載 [DockUsage.dmg](https://github.com/t42ji2ji/dock-usage/releases/latest/download/DockUsage.dmg)，把 Dock Usage 拖進「應用程式」。
@@ -59,7 +63,7 @@ Codex 會把額度寫進 `~/.codex/sessions` 底下的對話紀錄，Dock Usage 
 
 ## 隱私
 
-Dock Usage 只讀上面這兩個本機檔案，不連網，也不碰你的登入憑證。
+Dock Usage 只讀上面這兩個本機檔案，有裝 cmux 的話再讀它的通知清單，不連網，也不碰你的登入憑證。
 
 ## 限制
 

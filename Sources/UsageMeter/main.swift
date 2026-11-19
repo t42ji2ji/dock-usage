@@ -353,14 +353,29 @@ final class Host {
     }
 }
 
+/// cmux 裡有未讀通知的 Claude 分頁數：左上角紅點＋數字（右上角留給 macOS 自己的紅點）
+func drawAttention(_ count: Int, size s: CGFloat, phase: CGFloat) {
+    guard count > 0 else { return }
+    let r = s * 0.13, c = NSPoint(x: s * 0.16, y: s * 0.84)
+    let pulse = 0.85 + 0.15 * sin(phase * 1.2)
+    let dot = NSBezierPath(ovalIn: NSRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
+    NSColor.white.withAlphaComponent(pulse).setFill(); dot.fill()
+    let inner = NSBezierPath(ovalIn: NSRect(x: c.x - r * 0.84, y: c.y - r * 0.84, width: r * 1.68, height: r * 1.68))
+    NSColor(srgbRed: 0.93, green: 0.16, blue: 0.20, alpha: pulse).setFill(); inner.fill()
+    let str = NSAttributedString(string: count > 9 ? "9+" : "\(count)", attributes: [.font: NSFont.systemFont(ofSize: r * (count > 9 ? 0.95 : 1.25), weight: .bold), .foregroundColor: NSColor.white])
+    let sz = str.size()
+    str.draw(at: NSPoint(x: c.x - sz.width / 2, y: c.y - sz.height / 2))
+}
+
 /// 內容固定用 80pt（Dock 放大上限）畫成點陣圖；Dock 放大縮小時只改 layer 的框、GPU 縮放，不重畫
-func renderImage(kind: Kind, level: Double?, tick: Double?, phase: CGFloat) -> CGImage? {
+func renderImage(kind: Kind, level: Double?, tick: Double?, phase: CGFloat, attention: Int = 0) -> CGImage? {
     let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 160, pixelsHigh: 160, bitsPerSample: 8, samplesPerPixel: 4,
                                hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
     rep.size = NSSize(width: 80, height: 80)
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-    renderIcon(kind: kind, base: nil, short: level, long: tick, phase: phase, size: 80).draw(in: NSRect(x: 0, y: 0, width: 80, height: 80))
+    if level != nil { renderIcon(kind: kind, base: nil, short: level, long: tick, phase: phase, size: 80).draw(in: NSRect(x: 0, y: 0, width: 80, height: 80)) }
+    drawAttention(attention, size: 80, phase: phase)
     NSGraphicsContext.restoreGraphicsState()
     return rep.cgImage
 }
@@ -375,6 +390,8 @@ final class Overlay {
     var prevRect: CGRect?
     static let lead = CGFloat(Double(ProcessInfo.processInfo.environment["DOCKUSAGE_LEAD"] ?? "") ?? 0.5)
     var lastLevel = 0.0
+    var attention = 0
+    var lastAttention = 0
 
     init(kind: Kind) {
         self.kind = kind
@@ -391,7 +408,7 @@ final class Overlay {
             let n = v.split(separator: ",").compactMap { Double($0) }
             let wobble = n.count > 4 ? sin(CACurrentMediaTime() * 6) * n[4] : 0   // 測試用：上下擺動
             return CGRect(x: n[0], y: n[1] + (kind == .gpt ? n[3] : 0) + wobble, width: n[2], height: n[3]) }
-        guard let r = fake ?? item.flatMap(frame), fake != nil || onScreen(r), primary != nil else {
+        guard let r = fake ?? item.flatMap(frame), fake != nil || onScreen(r), primary != nil || attention > 0 else {
             layer.isHidden = true
             prevRect = nil
             return false
@@ -407,9 +424,9 @@ final class Overlay {
         shown += (to - shown) * (1 - pow(0.88, dt * 30))
         if abs(to - shown) < 0.05 { shown = to }
         let t = Int(phase * 12)                          // 約 38 次/秒重畫，波浪才順；字元仍約 13 次/秒換
-        if t != lastTick || abs(shown - lastLevel) > 0.01 {
-            lastTick = t; lastLevel = shown
-            layer.contents = renderImage(kind: kind, level: shown, tick: usage.short == nil ? nil : usage.long?.pct, phase: phase)
+        if t != lastTick || abs(shown - lastLevel) > 0.01 || attention != lastAttention {
+            lastTick = t; lastLevel = shown; lastAttention = attention
+            layer.contents = renderImage(kind: kind, level: primary == nil ? nil : shown, tick: usage.short == nil ? nil : usage.long?.pct, phase: phase, attention: attention)
         }
         // 圖示在 Dock 項目框裡置中，邊長＝框的短邊減 2pt（tilesize 37 時框高 39；2026-11-19 校準截圖量過）
         // AX 座標左上為原點；host 視窗蓋住主螢幕，layer 座標左下為原點
@@ -419,6 +436,25 @@ final class Overlay {
         layer.isHidden = false
         return true
     }
+}
+
+// MARK: - cmux 通知
+
+let cmuxCLI = "/Applications/cmux.app/Contents/Resources/bin/cmux"
+
+func unreadClaudeTabs() -> Int {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: cmuxCLI)
+    p.arguments = ["list-notifications", "--json"]
+    let out = Pipe()
+    p.standardOutput = out
+    p.standardError = FileHandle.nullDevice
+    guard (try? p.run()) != nil else { return 0 }
+    let data = out.fileHandleForReading.readDataToEndOfFile()
+    p.waitUntilExit()
+    guard let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return 0 }
+    let surfaces = list.filter { ($0["is_read"] as? Bool) == false && ($0["title"] as? String) == "Claude Code" }.compactMap { $0["surface_id"] as? String }
+    return Set(surfaces).count
 }
 
 // MARK: - App
@@ -445,6 +481,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         refresh()
         Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in self?.refresh() }
+        if FileManager.default.isExecutableFile(atPath: cmuxCLI) {
+            Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.refreshAttention() }
+        }
         schedule(fast: false)
     }
 
@@ -466,6 +505,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if login.state == .on { try? SMAppService.mainApp.register() } else { try? SMAppService.mainApp.unregister() }
         if r == .alertSecondButtonReturn { NSApp.terminate(nil) }
         return false
+    }
+
+    /// 跟 cmux 分頁上的紅點同一個來源：cmux 的通知（每回合結束、要權限、閒置等輸入），點進分頁才算讀過
+    func refreshAttention() {
+        queue.async {
+            let n = unreadClaudeTabs()
+            DispatchQueue.main.async { self.overlays[0].attention = n }
+        }
     }
 
     func refresh() {
@@ -549,7 +596,10 @@ if args.count >= 6, args[1] == "--snapshot", let k = Kind(rawValue: args[2]) {
     let size = args.count > 6 ? CGFloat(Double(args[6]) ?? 512) : 512
     let bare = args.contains("--bare")
     let base = path.map { NSWorkspace.shared.icon(forFile: $0) }
-    let overlay = renderIcon(kind: k, base: nil, short: Double(args[3]), long: Double(args[4]), phase: 0.8, size: size)
+    let attn = args.firstIndex(of: "--attn").flatMap { Int(args[$0 + 1]) } ?? 0
+    let core = renderIcon(kind: k, base: nil, short: Double(args[3]), long: Double(args[4]), phase: 0.8, size: size)
+    let overlay = NSImage(size: NSSize(width: size, height: size), flipped: false) { r in
+        core.draw(in: r); drawAttention(attn, size: size, phase: 0.8); return true }
     // 模擬疊在真圖示上的樣子：先畫原圖示，再蓋透明層
     let img = NSImage(size: NSSize(width: size, height: size), flipped: false) { r in
         if !bare { base?.draw(in: r) }

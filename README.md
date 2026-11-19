@@ -21,6 +21,10 @@ A grid of flickering ASCII characters fills each icon from the bottom as you use
 
 Numbers update whenever you use Claude Code or Codex. A limit that has passed its reset time drops back to 0.
 
+### Red dot for Claude Code sessions in cmux
+
+If you run Claude Code in [cmux](https://cmux.com), a red dot with a count appears at the top left of the Claude icon. It counts the tabs that show a notification in cmux: a session finished its turn, asks for permission, or waits for your input. It goes away once you open those tabs. Nothing to set up.
+
 ## Install
 
 1. Download [DockUsage.dmg](https://github.com/t42ji2ji/dock-usage/releases/latest/download/DockUsage.dmg) and drag Dock Usage into Applications.
@@ -59,7 +63,7 @@ Codex writes your limits into its session logs under `~/.codex/sessions`. Dock U
 
 ## Privacy
 
-Dock Usage only reads those two local files. It never goes online and never touches your login tokens.
+Dock Usage only reads those two local files, plus the notification list from cmux if you have it. It never goes online and never touches your login tokens.
 
 ## Limits
 
