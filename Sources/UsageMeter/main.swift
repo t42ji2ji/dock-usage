@@ -257,33 +257,48 @@ func log(_ m: String) {
 
 // MARK: - 疊在 Dock 圖示上的透明視窗
 
-/// 內容固定用 80pt 畫成一張點陣圖貼在 layer 上；Dock 放大縮小時只改視窗大小、GPU 縮放，不重畫
-final class OverlayView: NSView {
-    static let px = 160   // 80pt @2x，Dock 放大上限
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        wantsLayer = true
-        layer?.contentsGravity = .resize
-        layer?.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
+/// 一個固定不動、蓋住整個主螢幕的透明視窗，裡面每個圖示一個 layer。
+/// 移動視窗 WindowServer 每秒只套用約 60 次，移動 layer 則每格都跟得上（2026-11-19 實測）。
+final class Host {
+    static let shared = Host()
+    let window: NSWindow
+    let root: CALayer
+    init() {
+        let frame = NSScreen.screens.first?.frame ?? .zero
+        window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = false
+        window.ignoresMouseEvents = true
+        window.canHide = false   // app 被隱藏（例如背景啟動）時疊加層也要照常顯示
+        window.level = .screenSaver
+        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+        let v = NSView(frame: NSRect(origin: .zero, size: frame.size))
+        v.wantsLayer = true
+        window.contentView = v
+        root = v.layer!
     }
-    required init?(coder: NSCoder) { fatalError() }
+    func setVisible(_ on: Bool) {
+        if on && !window.isVisible { window.setFrame(NSScreen.screens.first?.frame ?? .zero, display: false); window.orderFrontRegardless() }
+        if !on && window.isVisible { window.orderOut(nil) }
+    }
+}
 
-    func render(kind: Kind, level: Double?, tick: Double?, phase: CGFloat) {
-        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Self.px, pixelsHigh: Self.px, bitsPerSample: 8, samplesPerPixel: 4,
-                                   hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-        rep.size = NSSize(width: 80, height: 80)
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-        renderIcon(kind: kind, base: nil, short: level, long: tick, phase: phase, size: 80).draw(in: NSRect(x: 0, y: 0, width: 80, height: 80))
-        NSGraphicsContext.restoreGraphicsState()
-        layer?.contents = rep.cgImage
-    }
+/// 內容固定用 80pt（Dock 放大上限）畫成點陣圖；Dock 放大縮小時只改 layer 的框、GPU 縮放，不重畫
+func renderImage(kind: Kind, level: Double?, tick: Double?, phase: CGFloat) -> CGImage? {
+    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 160, pixelsHigh: 160, bitsPerSample: 8, samplesPerPixel: 4,
+                               hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+    rep.size = NSSize(width: 80, height: 80)
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+    renderIcon(kind: kind, base: nil, short: level, long: tick, phase: phase, size: 80).draw(in: NSRect(x: 0, y: 0, width: 80, height: 80))
+    NSGraphicsContext.restoreGraphicsState()
+    return rep.cgImage
 }
 
 final class Overlay {
     let kind: Kind
-    let window: NSWindow
-    let view = OverlayView(frame: .zero)
+    let layer = CALayer()
     var usage = Usage()
     var shown: Double = 0
     var item: AXUIElement?
@@ -294,51 +309,45 @@ final class Overlay {
 
     init(kind: Kind) {
         self.kind = kind
-        window = NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: true)
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.hasShadow = false
-        window.ignoresMouseEvents = true
-        window.canHide = false   // app 被隱藏（例如背景啟動）時疊加層也要照常顯示
-        window.level = .screenSaver
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
-        window.contentView = view
+        layer.contentsGravity = .resize
+        layer.isHidden = true
+        Host.shared.root.addSublayer(layer)
     }
 
     var primary: Window? { usage.short ?? usage.long }
 
-    /// 每格：追 Dock 項目位置，水位往目標靠，重畫
+    /// 每格：追 Dock 項目位置，水位往目標靠，換字時重畫
     func step(phase: CGFloat, dt: Double) -> Bool {
         let fake = ProcessInfo.processInfo.environment["DOCKUSAGE_FAKE"].map { v -> CGRect in
-            let n = v.split(separator: ",").compactMap { Double($0) }; return CGRect(x: n[0], y: n[1] + (kind == .gpt ? n[3] : 0), width: n[2], height: n[3]) }
+            let n = v.split(separator: ",").compactMap { Double($0) }
+            let wobble = n.count > 4 ? sin(CACurrentMediaTime() * 6) * n[4] : 0   // 測試用：上下擺動
+            return CGRect(x: n[0], y: n[1] + (kind == .gpt ? n[3] : 0) + wobble, width: n[2], height: n[3]) }
         guard let r = fake ?? item.flatMap(frame), fake != nil || onScreen(r), primary != nil else {
-            if window.isVisible { window.orderOut(nil) }
+            layer.isHidden = true
             prevRect = nil
             return false
         }
-        // Dock 讀到的位置要等下一格才畫得出來：照上一格的移動量往前推一格（大跳就不推，避免出現/消失時亂飛）
+        // 讀到的位置要等下一格才畫得出來：照上一格的移動量往前推半格（大跳就不推，避免出現/消失時亂飛）
         var pr = r
         if let p = prevRect, abs(r.minY - p.minY) < 40, abs(r.height - p.height) < 20 {
             pr = CGRect(x: r.minX + (r.minX - p.minX) * Self.lead, y: r.minY + (r.minY - p.minY) * Self.lead,
                         width: r.width + (r.width - p.width) * Self.lead, height: r.height + (r.height - p.height) * Self.lead)
         }
         prevRect = r
-        let primaryH = CGDisplayBounds(CGMainDisplayID()).height
-        let f = NSRect(x: pr.minX, y: primaryH - pr.maxY, width: pr.width, height: pr.height)
         let to = primary?.pct ?? 0
         shown += (to - shown) * (1 - pow(0.88, dt * 30))
         if abs(to - shown) < 0.05 { shown = to }
-        // 字元每秒換約 13 次：只有換字或水位在動才重畫；大小變了交給 layer 縮放
         let t = Int(phase * 4)
         if t != lastTick || abs(shown - lastLevel) > 0.01 {
             lastTick = t; lastLevel = shown
-            view.render(kind: kind, level: shown, tick: usage.short == nil ? nil : usage.long?.pct, phase: phase)
+            layer.contents = renderImage(kind: kind, level: shown, tick: usage.short == nil ? nil : usage.long?.pct, phase: phase)
         }
         // 圖示在 Dock 項目框裡置中，邊長＝框的短邊減 2pt（tilesize 37 時框高 39；2026-11-19 校準截圖量過）
-        let side = min(f.width, f.height) - 2
-        let sq = NSRect(x: f.midX - side / 2, y: f.midY - side / 2, width: side, height: side)
-        if window.frame != sq { window.setFrame(sq, display: false) }
-        if !window.isVisible { window.orderFrontRegardless() }
+        // AX 座標左上為原點；host 視窗蓋住主螢幕，layer 座標左下為原點
+        let screenH = Host.shared.window.frame.height
+        let side = min(pr.width, pr.height) - 2
+        layer.frame = CGRect(x: pr.midX - side / 2, y: screenH - pr.midY - side / 2, width: side, height: side)
+        layer.isHidden = false
         return true
     }
 }
@@ -414,7 +423,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             RunLoop.main.add(timer!, forMode: .common)
         }
     }
-    @objc func linkFired() { frameTick() }
+    var ticks = 0, tickWindow = CACurrentMediaTime()
+    @objc func linkFired() {
+        let a = CACurrentMediaTime()
+        frameTick()
+        ticks += 1
+        tickCost += CACurrentMediaTime() - a
+        if a - tickWindow > 2, ProcessInfo.processInfo.environment["DOCKUSAGE_FAKE"] != nil {
+            log(String(format: "ticks/s %.1f  avg tick %.2fms", Double(ticks) / (a - tickWindow), tickCost / Double(ticks) * 1000))
+            ticks = 0; tickCost = 0; tickWindow = a
+        }
+    }
+    var tickCost = 0.0
 
     var lastTrusted: Bool?
     func frameTick() {
@@ -439,9 +459,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let dt = min(now - lastFrame, 0.1)
         lastFrame = now
         phase += 3.2 * CGFloat(dt)   // 約 2 秒流過一個波
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         let anyVisible = overlays.map { $0.step(phase: phase, dt: dt) }.contains(true)
+        CATransaction.commit()
+        Host.shared.setVisible(anyVisible)
         if anyVisible != fast {
-            log("visible=\(anyVisible) " + overlays.map { o in "\(o.kind) item=\(o.item != nil) frame=\(o.item.flatMap(frame).map { "\($0)" } ?? "-") win=\(o.window.frame) level=\(o.primary?.pct ?? -1)" }.joined(separator: " | "))
+            log("visible=\(anyVisible) " + overlays.map { o in "\(o.kind) item=\(o.item != nil) frame=\(o.item.flatMap(frame).map { "\($0)" } ?? "-") layer=\(o.layer.frame) level=\(o.primary?.pct ?? -1)" }.joined(separator: " | "))
             schedule(fast: anyVisible)
         }
     }
